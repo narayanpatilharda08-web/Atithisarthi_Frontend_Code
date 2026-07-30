@@ -1198,9 +1198,6 @@ async function resolveHotelSlug() {
     return querySlug;
   }
 
-  if (querySlug && !localRuntime) {
-    console.warn("Ignoring ?hotel override outside localhost for tenant safety.");
-  }
 
   if (localRuntime) {
     const fallbackSlug = getRuntimeLocalFallbackHotelSlug();
@@ -1217,6 +1214,12 @@ async function resolveHotelSlug() {
     const resolvedSlug = normalizeHotelSlug(result.hotel?.slug);
 
     if (resolvedSlug) {
+      if (querySlug && querySlug !== resolvedSlug) {
+        console.warn(
+          `Ignoring ?hotel=${querySlug} because this hostname resolves to ${resolvedSlug}.`
+        );
+      }
+
       rememberHotelSlug(resolvedSlug);
       return resolvedSlug;
     }
