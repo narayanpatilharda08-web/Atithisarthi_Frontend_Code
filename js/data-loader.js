@@ -3,6 +3,8 @@
 window.APP_STATE = {
   hotel: null,
   menu: null,
+  menuCategories: [],
+  menuVersion: "",
   testimonials: [],
   gallery: [],
   popupNotifications: [],
@@ -155,26 +157,6 @@ const SUPPORTED_THEME_SECTION_ORDER = [
 ];
 const SUPPORTED_THEME_HERO_LAYOUT_VARIANTS = ["default", "split", "stacked"];
 const SUPPORTED_GALLERY_LAYOUT_VARIANTS = ["standard", "large", "tall", "wide"];
-const MENU_CATEGORY_ALIASES = {
-  starter: "starters",
-  starters: "starters",
-  appetizer: "starters",
-  appetizers: "starters",
-  snack: "starters",
-  snacks: "starters",
-  main: "mains",
-  mains: "mains",
-  maincourse: "mains",
-  maincourses: "mains",
-  dessert: "desserts",
-  desserts: "desserts",
-  sweet: "desserts",
-  sweets: "desserts",
-  drink: "drinks",
-  drinks: "drinks",
-  beverage: "drinks",
-  beverages: "drinks"
-};
 const SUPPORTED_HERO_SCENE_PRESETS = [
   "default",
   "luxury",
@@ -871,15 +853,64 @@ function normalizePopupNotifications(rawNotifications) {
 }
 
 function normalizePublicMenuCategoryKey(value) {
-  const candidate = normalizeThemeString(value, 80).toLowerCase();
+  const candidate = normalizeThemeString(value, 120);
 
   if (!candidate) {
     return "";
   }
 
-  const compactCandidate = candidate.replace(/[^a-z]/g, "");
+  return candidate;
+}
 
-  return MENU_CATEGORY_ALIASES[compactCandidate] || candidate;
+function normalizePublicMenuCategories(rawCategories, normalizedMenu = {}) {
+  const categories = Array.isArray(rawCategories) ? rawCategories : [];
+  const normalized = categories
+    .map((category, index) => {
+      if (!category || typeof category !== "object" || Array.isArray(category)) return null;
+      const key = normalizePublicMenuCategoryKey(category.key);
+      const name = normalizeThemeString(category.name, 160);
+      if (!key || !name || !Array.isArray(normalizedMenu[key]) || !normalizedMenu[key].length) return null;
+      const defaultImage = isPlainObject(category.defaultImage) ? category.defaultImage : {};
+      return {
+        reference: normalizeThemeString(category.reference, 160) || key,
+        key,
+        name,
+        slug: normalizeThemeString(category.slug, 140),
+        description: normalizeThemeString(category.description, 1000),
+        displayOrder: Number.isFinite(Number(category.displayOrder)) ? Number(category.displayOrder) : index,
+        itemCount: normalizedMenu[key].length,
+        isActive: category.isActive !== false,
+        isPublished: category.isPublished !== false,
+        staffEnabled: category.staffEnabled !== false,
+        websiteEnabled: category.websiteEnabled !== false,
+        qrEnabled: category.qrEnabled !== false,
+        defaultImage: {
+          thumbnailUrl: normalizeThemeString(defaultImage.thumbnailUrl, 2000),
+          cardUrl: normalizeThemeString(defaultImage.cardUrl, 2000),
+          fallbackUrl: normalizeThemeString(defaultImage.fallbackUrl, 2000),
+          alt: normalizeThemeString(defaultImage.alt, 300),
+          version: Number(defaultImage.version || 1)
+        }
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.displayOrder - right.displayOrder || left.name.localeCompare(right.name));
+
+  if (normalized.length) return normalized;
+  return Object.keys(normalizedMenu).map((key, index) => ({
+    reference: key,
+    key,
+    name: key.replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase()),
+    slug: encodeURIComponent(key),
+    displayOrder: index,
+    itemCount: normalizedMenu[key].length,
+    isActive: true,
+    isPublished: true,
+    staffEnabled: true,
+    websiteEnabled: true,
+    qrEnabled: true,
+    defaultImage: {}
+  }));
 }
 
 function normalizePublicMenu(rawMenu) {
@@ -1363,6 +1394,7 @@ async function loadAppData({
 
   const hotel = mapHotelProfileToFrontendShape(hotelResult.hotel);
   const normalizedMenu = normalizePublicMenu(menuResult.menu);
+  const normalizedMenuCategories = normalizePublicMenuCategories(menuResult.categories, normalizedMenu);
 
   window.APP_STATE.hotel = hotel;
   window.APP_STATE.gallery = [];
@@ -1373,6 +1405,8 @@ async function loadAppData({
   window.APP_STATE.ordering = hotel.ordering || normalizeHotelOrdering(null);
   window.APP_STATE.heroScene = hotel.hero?.scene || { ...DEFAULT_HERO_SCENE_CONFIG };
   window.APP_STATE.menu = normalizedMenu;
+  window.APP_STATE.menuCategories = normalizedMenuCategories;
+  window.APP_STATE.menuVersion = normalizeThemeString(menuResult.menuVersion, 80);
   window.APP_STATE.theme = hotel.theme || {};
   window.APP_STATE.loadingScreen = hotel.theme?.loadingScreen || {
     ...DEFAULT_LOADING_SCREEN_CONFIG

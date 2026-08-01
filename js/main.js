@@ -195,8 +195,24 @@ function getMenuData() {
   return window.APP_STATE?.menu || {};
 }
 
+function getMenuCategoryRecords() {
+  const records = Array.isArray(window.APP_STATE?.menuCategories)
+    ? window.APP_STATE.menuCategories
+    : [];
+  const isQrOrder = String(getActiveOrderContext()?.orderSource || "").toLowerCase() === "qr";
+  return records.filter((category) =>
+    category && category.isActive !== false && category.isPublished !== false &&
+    category.websiteEnabled !== false && (!isQrOrder || category.qrEnabled !== false)
+  );
+}
+
 function getMenuCategories() {
-  return Object.keys(getMenuData());
+  const categoryKeys = getMenuCategoryRecords().map((category) => category.key).filter(Boolean);
+  return categoryKeys.length ? categoryKeys : Object.keys(getMenuData());
+}
+
+function getMenuCategoryRecord(categoryKey = "") {
+  return getMenuCategoryRecords().find((category) => category.key === categoryKey) || null;
 }
 
 function getMenuItemsByCategory(category) {
@@ -206,15 +222,12 @@ function getMenuItemsByCategory(category) {
 
 function getCurrentMenuCategory() {
   const gridCategory = $("#menuGrid")?.dataset.activeCategory;
-  if (gridCategory) return gridCategory;
+  if (gridCategory && getMenuCategories().includes(gridCategory)) return gridCategory;
 
   const activeTabCategory = $(".menu-tab.active")?.dataset.cat;
-  if (activeTabCategory) return activeTabCategory;
+  if (activeTabCategory && getMenuCategories().includes(activeTabCategory)) return activeTabCategory;
 
-  const categories = getMenuCategories();
-  if (categories.includes("starters")) return "starters";
-
-  return categories[0] || "starters";
+  return getMenuCategories()[0] || "";
 }
 
 function applyHotelConfigFromState() {
@@ -1320,8 +1333,11 @@ function normalizeImagePath(src = "") {
     : `./${trimmed.replace(/^\.?\//, "")}`;
 }
 
-function createImageMarkup({ src, alt, badge, name }) {
-  const safeSrc = normalizeImagePath(src);
+function createImageMarkup({ src, imageMeta = {}, alt, badge, name }) {
+  const safeSrc = normalizeImagePath(imageMeta.url || src || "/img/default-food.v1.webp");
+  const categoryFallback = normalizeImagePath(imageMeta.categoryFallbackUrl || "");
+  const globalFallback = normalizeImagePath(imageMeta.globalFallbackUrl || "/img/default-food.v1.webp");
+  const formatFallback = normalizeImagePath(imageMeta.fallbackFormatUrl || "/img/default-food.v1.jpg");
   const safeAlt = escapeAttr(alt || name || FALLBACK_IMAGE.altSuffix);
   const safeName = escapeHTML(name || "Menu item");
 
@@ -1331,6 +1347,10 @@ function createImageMarkup({ src, alt, badge, name }) {
         <img
           class="media-frame__img"
           data-menu-image
+          data-category-fallback-src="${escapeAttr(categoryFallback)}"
+          data-global-fallback-src="${escapeAttr(globalFallback)}"
+          data-format-fallback-src="${escapeAttr(formatFallback)}"
+          data-fallback-stage="${escapeAttr(imageMeta.source || "item")}"
           src="${escapeAttr(safeSrc)}"
           alt="${safeAlt}"
           width="640"
@@ -1356,28 +1376,48 @@ function initManagedImages(scope = document) {
 
   images.forEach((img) => {
     const frame = img.closest("[data-image-frame]");
-    if (!frame) return;
+    if (!frame || img.dataset.fallbackBound === "true") return;
+    img.dataset.fallbackBound = "true";
+    const candidates = [
+      img.dataset.categoryFallbackSrc,
+      img.dataset.globalFallbackSrc,
+      img.dataset.formatFallbackSrc
+    ].filter(Boolean);
+    const attempted = new Set([new URL(img.src, document.baseURI).href]);
 
-    let handled = false;
+    let finished = false;
 
     const markLoaded = () => {
-      if (handled) return;
-      handled = true;
+      if (finished) return;
+      finished = true;
       frame.classList.remove("is-loading");
+      frame.classList.remove("has-error");
       frame.classList.add("is-loaded");
     };
 
     const markError = () => {
-      if (handled) return;
-      handled = true;
+      if (finished) return;
+      const nextCandidate = candidates.find((candidate) => {
+        const resolved = new URL(candidate, document.baseURI).href;
+        return !attempted.has(resolved);
+      });
+      if (nextCandidate) {
+        const resolved = new URL(nextCandidate, document.baseURI).href;
+        attempted.add(resolved);
+        frame.classList.add("is-loading");
+        img.dataset.fallbackStage = resolved.includes("default-food.v1") ? "global" : "category";
+        img.src = nextCandidate;
+        return;
+      }
+      finished = true;
       frame.classList.remove("is-loading");
       frame.classList.add("has-error");
       img.setAttribute("aria-hidden", "true");
       img.alt = "";
     };
 
-    img.addEventListener("load", markLoaded, { once: true });
-    img.addEventListener("error", markError, { once: true });
+    img.addEventListener("load", markLoaded);
+    img.addEventListener("error", markError);
 
     if (img.complete) {
       if (img.naturalWidth > 0) {
@@ -2649,8 +2689,11 @@ function showSecureQrOrderStatusPrompt(publicReference = "") {
 
 function flattenMenuData() {
   const menuData = getMenuData();
+  const eligibleCategories = new Set(getMenuCategories());
 
-  return Object.entries(menuData).flatMap(([category, items]) =>
+  return Object.entries(menuData)
+    .filter(([category]) => eligibleCategories.has(category))
+    .flatMap(([category, items]) =>
     items.map((item) => ({ ...item, category }))
   );
 }
@@ -4791,20 +4834,9 @@ function initMenuAndCart() {
     ensureMenuAssistantUnavailableCard(menuAssistantThemeConfig);
   }
 
-  const CATEGORY_LABELS = {
-    starters: "Starter",
-    mains: "Main Course",
-    desserts: "Dessert",
-    drinks: "Beverage",
-    combos: "Combo",
-  };
   const availableCategories = getMenuCategories();
 
   function getFallbackCategoryLabel(category = "") {
-    if (CATEGORY_LABELS[category]) {
-      return CATEGORY_LABELS[category];
-    }
-
     const normalized = String(category || "")
       .trim()
       .replace(/[-_]+/g, " ");
@@ -4821,29 +4853,23 @@ function initMenuAndCart() {
       return;
     }
 
-    const existingCategories = new Set(
-      tabs.map((tab) => String(tab.dataset.cat || "").trim()).filter(Boolean)
-    );
-
-    availableCategories.forEach((category) => {
-      if (!category || existingCategories.has(category)) {
-        return;
-      }
-
+    tabsWrap.innerHTML = "";
+    availableCategories.forEach((category, index) => {
       const nextTab = document.createElement("button");
       nextTab.type = "button";
-      nextTab.className = "menu-tab";
+      nextTab.className = `menu-tab${index === 0 ? " active" : ""}`;
       nextTab.dataset.cat = category;
       nextTab.setAttribute("role", "tab");
-      nextTab.setAttribute("aria-selected", "false");
+      nextTab.setAttribute("aria-selected", String(index === 0));
       nextTab.setAttribute("aria-controls", "menuGrid");
+      nextTab.id = `menu-category-${index + 1}`;
 
       const icon = document.createElement("i");
       icon.className = "fas fa-utensils";
       icon.setAttribute("aria-hidden", "true");
 
       const label = document.createElement("span");
-      label.textContent = getFallbackCategoryLabel(category);
+      label.textContent = getMenuCategoryRecord(category)?.name || getFallbackCategoryLabel(category);
 
       nextTab.append(icon, document.createTextNode(" "), label);
       tabsWrap.appendChild(nextTab);
@@ -4859,14 +4885,9 @@ function initMenuAndCart() {
     .filter(Boolean);
 
   function getCategoryLabel(category) {
-    const configuredLabel = getConfiguredMenuCategoryLabel(category);
-
-    if (configuredLabel) {
-      return configuredLabel;
-    }
-
-    if (CATEGORY_LABELS[category]) {
-      return CATEGORY_LABELS[category];
+    const categoryRecord = getMenuCategoryRecord(category);
+    if (categoryRecord?.name) {
+      return categoryRecord.name;
     }
 
     const normalized = String(category || "")
@@ -4881,6 +4902,16 @@ function initMenuAndCart() {
   }
 
   function getInitialMenuCategory() {
+    const requestedCategory = new URLSearchParams(window.location.search).get("category") || "";
+    if (requestedCategory) {
+      const matchingCategory = getMenuCategoryRecords().find(
+        (category) => category.slug === requestedCategory || category.key === requestedCategory
+      );
+      if (matchingCategory && availableCategories.includes(matchingCategory.key)) {
+        return matchingCategory.key;
+      }
+    }
+
     const currentTabCategory = $(".menu-tab.active")?.dataset.cat;
 
     if (currentTabCategory && availableCategories.includes(currentTabCategory)) {
@@ -4895,7 +4926,7 @@ function initMenuAndCart() {
       return firstTabbedCategory;
     }
 
-    return availableCategories[0] || "starters";
+    return availableCategories[0] || "";
   }
 
   function syncCategoryTabsAvailability() {
@@ -7481,6 +7512,7 @@ function initMenuAndCart() {
       <article class="menu-card" role="article" style="animation-delay:${index * 0.05}s">
         ${createImageMarkup({
           src: item.image,
+          imageMeta: item.imageMeta,
           alt: item.alt || item.name,
           badge: item.badge,
           name: item.name,
@@ -7647,12 +7679,22 @@ function initMenuAndCart() {
     restorePendingMenuGridFocus();
   };
 
+  function persistSelectedMenuCategory(categoryKey = "") {
+    const category = getMenuCategoryRecord(categoryKey);
+    if (!category || !window.history?.replaceState) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set("category", category.slug || category.key);
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  }
+
   tabs.forEach((tab) => {
     tab.addEventListener("click", () => {
       MENU_STATE.activeCategory = tab.dataset.cat;
       MENU_STATE.selectedTag = "all";
       MENU_STATE.visibleCount = MENU_STATE.batchSize;
+      persistSelectedMenuCategory(tab.dataset.cat);
       renderMenu(tab.dataset.cat, { resetVisible: true });
+      tab.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
     });
   });
 

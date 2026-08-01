@@ -49,9 +49,10 @@ const STAFF_BROWSER_ALERT_ENABLED_KEY = "hotel_platform_staff_browser_alert_enab
 const STAFF_SOUND_ALERT_VOLUME_KEY = "hotel_platform_staff_sound_alert_volume";
 const STAFF_SOUND_ALERT_THROTTLE_MS = 1200;
 const STAFF_KDS_PREFERENCES_KEY_PREFIX = "hotel_platform_staff_kds_preferences";
-const STAFF_AUTO_REFRESH_INTERVAL_MS = 3 * 1000;
-const STAFF_KDS_AUTO_REFRESH_INTERVAL_MS = 3 * 1000;
-const STAFF_SLOW_REQUEST_WARNING_MS = 1200;
+const STAFF_AUTO_REFRESH_INTERVAL_MS = 15 * 1000;
+const STAFF_KDS_AUTO_REFRESH_INTERVAL_MS = 5 * 1000;
+const STAFF_SLOW_REQUEST_WARNING_MS = 3000;
+const STAFF_SLOW_REQUEST_WARNING_COOLDOWN_MS = 60 * 1000;
 const STAFF_KDS_FRESH_HIGHLIGHT_WINDOW_MS = 2 * 60 * 1000;
 const STAFF_KDS_BOARD_COLUMNS = ["new", "preparing", "ready"];
 const STAFF_KDS_VIEW_MODES = ["kitchen", "expo", "manager"];
@@ -124,6 +125,7 @@ const STAFF_STATE = {
   kdsConsecutiveFailures: 0,
   kdsDefaultVisibilityApplied: false,
   tableOrderMenu: [],
+  tableOrderMenuCategories: [],
   tableOrderMenuVersion: "",
   tableOrderMenuRenderLimit: STAFF_TABLE_ORDER_RENDER_BATCH_SIZE,
   tableOrderCart: {},
@@ -356,6 +358,7 @@ const STAFF_VIEW_META = {
 };
 let staffAutoRefreshTimer = null;
 let staffAutoRefreshInFlight = false;
+const staffSlowRequestWarningAtByPath = new Map();
 let staffCompactViewport = window.innerWidth <= 1080;
 let staffMobileSidebarViewport = window.innerWidth <= 760;
 let staffAlertAudioContext = null;
@@ -10026,6 +10029,19 @@ async function loadStaffRoomAdvancePolicy() {
   fillStaffRoomAdvancePolicy(result.policy || {});
 }
 
+async function loadStaffRoomAdvancePolicySafely() {
+  try {
+    await loadStaffRoomAdvancePolicy();
+  } catch (error) {
+    const status = $("#staffRoomAdvancePolicyStatus");
+    if (status) {
+      status.textContent =
+        error.message || "Advance policy is unavailable.";
+    }
+    syncStaffRoomAdvanceFields();
+  }
+}
+
 async function saveStaffRoomAdvancePolicy() {
   if (!isStaffManagerSession()) return;
   const button = $("#staffRoomAdvancePolicySaveBtn");
@@ -10522,6 +10538,8 @@ function normalizeStaffTableOrderMenuItem(item = {}) {
     desc: String(item.desc || item.description || "").trim(),
     price: Number(item.price || 0) || 0,
     category: String(item.category || "others").trim() || "others",
+    categoryName: String(item.categoryName || "").trim(),
+    imageMeta: item.imageMeta && typeof item.imageMeta === "object" ? item.imageMeta : null,
     badge: String(item.badge || "").trim(),
     tag: String(item.tag || "").trim(),
     itemType: String(item.itemType || item.item_type || "single").trim() || "single",
@@ -10532,6 +10550,8 @@ function normalizeStaffTableOrderMenuItem(item = {}) {
 }
 
 function getStaffTableOrderCategoryLabel(category = "") {
+  const configured = STAFF_STATE.tableOrderMenuCategories.find((entry) => entry.key === category);
+  if (configured?.name) return configured.name;
   const normalized = String(category || "")
     .trim()
     .replace(/[-_]+/g, " ");
@@ -10544,12 +10564,15 @@ function getStaffTableOrderCategoryLabel(category = "") {
 }
 
 function getStaffTableOrderAvailableCategories() {
+  const availableItemCategories = new Set(
+    STAFF_STATE.tableOrderMenu.map((item) => String(item.category || "").trim()).filter(Boolean)
+  );
+  const configuredOrder = STAFF_STATE.tableOrderMenuCategories
+    .map((category) => String(category.key || "").trim())
+    .filter((category) => availableItemCategories.has(category));
+  if (configuredOrder.length) return configuredOrder;
   return Array.from(
-    new Set(
-      STAFF_STATE.tableOrderMenu
-        .map((item) => String(item.category || "others").trim() || "others")
-        .filter(Boolean)
-    )
+    availableItemCategories
   ).sort((a, b) => a.localeCompare(b));
 }
 
@@ -12104,6 +12127,9 @@ async function loadStaffTableOrderMenu({ silent = false } = {}) {
     const nextMenu = Array.isArray(result.items)
       ? result.items.map(normalizeStaffTableOrderMenuItem).filter(Boolean)
       : [];
+    const nextCategories = Array.isArray(result.categories)
+      ? result.categories.filter((category) => category && category.key && category.name)
+      : [];
     const nextMenuVersion =
       String(result.menuVersion || "").trim() ||
       JSON.stringify(nextMenu.map((item) => [item.id, item.price, item.category, item.itemType]));
@@ -12111,6 +12137,7 @@ async function loadStaffTableOrderMenu({ silent = false } = {}) {
       !STAFF_STATE.tableOrderMenuLoaded ||
       nextMenuVersion !== STAFF_STATE.tableOrderMenuVersion;
     STAFF_STATE.tableOrderMenu = nextMenu;
+    STAFF_STATE.tableOrderMenuCategories = nextCategories;
     STAFF_STATE.tableOrderMenuVersion = nextMenuVersion;
     STAFF_STATE.tableOrderMenuLoaded = true;
     if (menuChanged) {
@@ -12826,14 +12853,23 @@ async function staffFetchJson(url, options = {}) {
       safePath = String(url || "").split("?")[0];
     }
 
-    console.warn("Slow staff API request", {
-      method: String(options.method || "GET").toUpperCase(),
-      path: safePath,
-      durationMs: Number(durationMs.toFixed(1)),
-      status: response.status,
-      requestId,
-      serverTiming
-    });
+    const method = String(options.method || "GET").toUpperCase();
+    const warningKey = `${method} ${safePath}`;
+    const lastWarningAt = Number(
+      staffSlowRequestWarningAtByPath.get(warningKey) || 0
+    );
+
+    if (Date.now() - lastWarningAt >= STAFF_SLOW_REQUEST_WARNING_COOLDOWN_MS) {
+      staffSlowRequestWarningAtByPath.set(warningKey, Date.now());
+      console.warn("Slow staff API request", {
+        method,
+        path: safePath,
+        durationMs: Number(durationMs.toFixed(1)),
+        status: response.status,
+        requestId,
+        serverTiming
+      });
+    }
   }
 
   const data = await response.json().catch(() => ({}));
@@ -13010,7 +13046,6 @@ function stopStaffAutoRefresh() {
 
   window.clearInterval(staffAutoRefreshTimer);
   staffAutoRefreshTimer = null;
-  staffAutoRefreshInFlight = false;
   setStaffLiveRefreshStatus("Live updates off", "muted");
   setStaffKdsLiveStatus("Kitchen waiting", "muted");
 }
@@ -14325,6 +14360,7 @@ async function checkExistingStaffSession() {
       }
       if (canStaffUseFeature("rooms")) {
         initialLoads.push(loadStaffRooms());
+        initialLoads.push(loadStaffRoomAdvancePolicySafely());
       }
       await Promise.all(initialLoads);
     }
@@ -14392,6 +14428,7 @@ function bindStaffLoginForm() {
         }
         if (canStaffUseFeature("rooms")) {
           initialLoads.push(loadStaffRooms());
+          initialLoads.push(loadStaffRoomAdvancePolicySafely());
         }
         await Promise.all(initialLoads);
       }
@@ -15439,11 +15476,6 @@ function bindStaffOrderActions() {
       void saveStaffRoomAdvancePolicy();
     });
   }
-  void loadStaffRoomAdvancePolicy().catch((error) => {
-    const status = $("#staffRoomAdvancePolicyStatus");
-    if (status) status.textContent = error.message || "Advance policy is unavailable.";
-    syncStaffRoomAdvanceFields();
-  });
 
   if (roomNegotiatedRateEnabledInput) {
     roomNegotiatedRateEnabledInput.addEventListener("change", () => {

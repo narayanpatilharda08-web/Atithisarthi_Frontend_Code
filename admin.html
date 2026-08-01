@@ -21,6 +21,7 @@
       padding: 0;
     }
     #hotelFormSection,
+#menuCategoryFormSection,
 #menuFormSection,
 #menuComboFormSection,
 #galleryFormSection,
@@ -926,6 +927,7 @@ body {
             <button class="admin-tab" type="button" role="tab" aria-controls="adminContent" aria-selected="false" data-tab="hotels">Hotels</button>
             <button class="admin-tab" type="button" role="tab" aria-controls="adminContent" aria-selected="false" data-tab="rooms">Rooms</button>
             <button class="admin-tab" type="button" role="tab" aria-controls="adminContent" aria-selected="false" data-tab="menu-items">Menu Items</button>
+            <button class="admin-tab" type="button" role="tab" aria-controls="adminContent" aria-selected="false" data-tab="menu-categories">Menu Categories</button>
             <button class="admin-tab" type="button" role="tab" aria-controls="adminContent" aria-selected="false" data-tab="menu-combos">Combo Offers</button>
             <button class="admin-tab" type="button" role="tab" aria-controls="adminContent" aria-selected="false" data-tab="gallery-items">Gallery Items</button>
             <button class="admin-tab" type="button" role="tab" aria-controls="adminContent" aria-selected="false" data-tab="popup-notifications">Popup Notifications</button>
@@ -941,6 +943,7 @@ body {
             <button type="button" id="openRoomFormBtn" class="admin-tab">Room Form</button>
             <button type="button" id="openRoomBookingFormBtn" class="admin-tab">Manual Room Booking</button>
             <button type="button" id="openMenuFormBtn" class="admin-tab">Menu Form</button>
+            <button type="button" id="openMenuCategoryFormBtn" class="admin-tab">Category Form</button>
             <button type="button" id="openMenuComboFormBtn" class="admin-tab">Combo Form</button>
             <button type="button" id="openGalleryFormBtn" class="admin-tab">Gallery Form</button>
             <button type="button" id="openPopupNotificationFormBtn" class="admin-tab">Popup Form</button>
@@ -1490,6 +1493,63 @@ body {
       </form>
     </section>
 
+    <section id="menuCategoryFormSection" class="admin-card" style="display:none;">
+      <h2>Create / Update Menu Category</h2>
+      <p class="admin-form-help">This is the authoritative hotel-scoped Category Master used by Staff, Take Order, Website, and QR menus.</p>
+      <form id="menuCategoryForm" class="admin-grid">
+        <input id="menuCategoryDbId" type="hidden" />
+        <div class="admin-field">
+          <label class="admin-field-label" for="menuCategoryHotelSlugInput">Hotel Slug (Required)</label>
+          <input id="menuCategoryHotelSlugInput" maxlength="120" required />
+        </div>
+        <div class="admin-field">
+          <label class="admin-field-label" for="menuCategoryKeyInput">Stable Category Key (Required)</label>
+          <input id="menuCategoryKeyInput" maxlength="120" placeholder="south-indian" required />
+          <p class="admin-field-hint">Menu Items link to this value. It is locked after creation; change the display name instead.</p>
+        </div>
+        <div class="admin-field">
+          <label class="admin-field-label" for="menuCategoryNameInput">Public Display Name (Required)</label>
+          <input id="menuCategoryNameInput" maxlength="160" placeholder="South Indian" required />
+        </div>
+        <div class="admin-field">
+          <label class="admin-field-label" for="menuCategorySlugInput">Public Slug</label>
+          <input id="menuCategorySlugInput" maxlength="140" placeholder="south-indian" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" />
+        </div>
+        <div class="admin-field">
+          <label class="admin-field-label" for="menuCategoryDescriptionInput">Description</label>
+          <textarea id="menuCategoryDescriptionInput" maxlength="1000" rows="3"></textarea>
+        </div>
+        <div class="admin-field">
+          <label class="admin-field-label" for="menuCategoryDisplayOrderInput">Display Order</label>
+          <input id="menuCategoryDisplayOrderInput" type="number" min="0" step="1" value="0" />
+        </div>
+        <div class="admin-field">
+          <label class="admin-field-label" for="menuCategoryImageFileInput">Default Category Image</label>
+          <input id="menuCategoryImageFileInput" type="file" accept="image/jpeg,image/png,image/webp,image/avif" />
+          <p class="admin-field-hint">Items without a valid image use this file. JPG, PNG, WebP, or AVIF; maximum 5 MB.</p>
+        </div>
+        <div class="admin-field">
+          <label class="admin-field-label" for="menuCategoryImageUrlInput">Default Image URL</label>
+          <input id="menuCategoryImageUrlInput" maxlength="2000" />
+        </div>
+        <div class="admin-field">
+          <label class="admin-field-label" for="menuCategoryThumbnailUrlInput">Default Thumbnail URL</label>
+          <input id="menuCategoryThumbnailUrlInput" maxlength="2000" />
+        </div>
+        <input id="menuCategoryImageStoragePathInput" type="hidden" />
+        <div class="admin-field">
+          <label class="admin-field-label" for="menuCategoryImageAltInput">Image Alt Text</label>
+          <input id="menuCategoryImageAltInput" maxlength="300" placeholder="South Indian food" />
+        </div>
+        <label class="admin-checkbox"><input id="menuCategoryIsActiveInput" type="checkbox" checked /> Active</label>
+        <label class="admin-checkbox"><input id="menuCategoryIsPublishedInput" type="checkbox" checked /> Published</label>
+        <label class="admin-checkbox"><input id="menuCategoryStaffEnabledInput" type="checkbox" checked /> Staff / Take Order</label>
+        <label class="admin-checkbox"><input id="menuCategoryWebsiteEnabledInput" type="checkbox" checked /> Public Website</label>
+        <label class="admin-checkbox"><input id="menuCategoryQrEnabledInput" type="checkbox" checked /> QR Menu</label>
+        <button type="submit" class="status-btn">Save Menu Category</button>
+      </form>
+    </section>
+
     <section id="menuFormSection" class="admin-card" style="display:none;">
       <h2>Create / Update Menu Item</h2>
       <p class="admin-form-help">Use this form to create or update one menu record. It stays separate from hotel profile content and gallery management.</p>
@@ -1504,7 +1564,8 @@ body {
 
         <div class="admin-field">
           <label class="admin-field-label" for="menuCategoryInput">Category (Required)</label>
-          <input id="menuCategoryInput" name="category" placeholder="starters" required />
+          <input id="menuCategoryInput" name="category" list="menuCategoryOptions" placeholder="Select a Category Master value" required />
+          <datalist id="menuCategoryOptions"></datalist>
         </div>
 
         <div class="admin-field">

@@ -48,6 +48,7 @@ const TAB_LABELS = {
   rooms: "rooms",
   "gallery-items": "gallery items",
   "popup-notifications": "popup notifications",
+  "menu-categories": "menu categories",
   "menu-items": "menu items",
   "menu-combos": "combo offers",
   testimonials: "testimonials"
@@ -91,6 +92,7 @@ const state = {
   notificationEventMaxRetries: 3,
   galleryItems: [],
   popupNotifications: [],
+  menuCategories: [],
   menuItems: [],
   menuCombos: [],
   roomTypes: [],
@@ -1107,6 +1109,22 @@ function syncMenuFormHotelSlug({ force = false } = {}) {
   }
 }
 
+function syncMenuCategoryFormHotelSlug({ force = false } = {}) {
+  const input = document.getElementById("menuCategoryHotelSlugInput");
+  const idField = document.getElementById("menuCategoryDbId");
+  if (!input || idField?.value.trim()) return;
+  const hotelSlug = getSelectedHotelSlug();
+  if (force || !input.value.trim()) input.value = hotelSlug || "";
+}
+
+function refreshMenuCategoryOptions() {
+  const options = document.getElementById("menuCategoryOptions");
+  if (!options) return;
+  options.innerHTML = state.menuCategories.map((category) =>
+    `<option value="${escapeHTML(category.key)}">${escapeHTML(category.name)}</option>`
+  ).join("");
+}
+
 function syncMenuComboFormHotelSlug({ force = false } = {}) {
   const input = document.getElementById("menuComboHotelSlugInput");
   const idField = document.getElementById("menuComboDbId");
@@ -1273,6 +1291,39 @@ function resetMenuItemForm() {
   if (availableField) availableField.checked = true;
 
   syncMenuFormHotelSlug({ force: true });
+}
+
+function resetMenuCategoryForm() {
+  const form = document.getElementById("menuCategoryForm");
+  if (!form) return;
+  form.reset();
+  document.getElementById("menuCategoryDbId").value = "";
+  document.getElementById("menuCategoryKeyInput").readOnly = false;
+  document.getElementById("menuCategoryDisplayOrderInput").value = "0";
+  ["menuCategoryIsActiveInput", "menuCategoryIsPublishedInput", "menuCategoryStaffEnabledInput", "menuCategoryWebsiteEnabledInput", "menuCategoryQrEnabledInput"]
+    .forEach((id) => { const field = document.getElementById(id); if (field) field.checked = true; });
+  syncMenuCategoryFormHotelSlug({ force: true });
+}
+
+function fillMenuCategoryForm(category = {}) {
+  document.getElementById("menuCategoryDbId").value = category.reference || "";
+  document.getElementById("menuCategoryHotelSlugInput").value = getSelectedHotelSlug() || "";
+  const keyInput = document.getElementById("menuCategoryKeyInput");
+  keyInput.value = category.key || "";
+  keyInput.readOnly = true;
+  document.getElementById("menuCategoryNameInput").value = category.name || "";
+  document.getElementById("menuCategorySlugInput").value = category.slug || "";
+  document.getElementById("menuCategoryDescriptionInput").value = category.description || "";
+  document.getElementById("menuCategoryDisplayOrderInput").value = String(category.displayOrder || 0);
+  document.getElementById("menuCategoryImageUrlInput").value = category.defaultImage?.cardUrl || "";
+  document.getElementById("menuCategoryThumbnailUrlInput").value = category.defaultImage?.thumbnailUrl || "";
+  document.getElementById("menuCategoryImageStoragePathInput").value = category.imageStoragePath || "";
+  document.getElementById("menuCategoryImageAltInput").value = category.defaultImage?.alt || "";
+  document.getElementById("menuCategoryIsActiveInput").checked = category.isActive !== false;
+  document.getElementById("menuCategoryIsPublishedInput").checked = category.isPublished !== false;
+  document.getElementById("menuCategoryStaffEnabledInput").checked = category.staffEnabled !== false;
+  document.getElementById("menuCategoryWebsiteEnabledInput").checked = category.websiteEnabled !== false;
+  document.getElementById("menuCategoryQrEnabledInput").checked = category.qrEnabled !== false;
 }
 
 function resetMenuComboForm() {
@@ -2136,6 +2187,22 @@ async function loadTabData() {
     return;
   }
 
+  if (state.activeTab === "menu-categories") {
+    const hotelSlug = getSelectedHotelSlug();
+    if (!hotelSlug) {
+      state.menuCategories = [];
+      content.innerHTML = `<p class="empty-state">Select a hotel to manage its Menu Category Master.</p>`;
+      return;
+    }
+    const result = await fetchTabJson(
+      `${API_BASE}/menu-categories?hotelSlug=${encodeURIComponent(hotelSlug)}`
+    );
+    state.menuCategories = result.categories || [];
+    refreshMenuCategoryOptions();
+    renderMenuCategories();
+    return;
+  }
+
   if (state.activeTab === "menu-items") {
     const hotelSlug = getSelectedHotelSlug();
     const result = await fetchTabJson(
@@ -2214,6 +2281,52 @@ async function loadTabData() {
     }
   }
 }
+function renderMenuCategories() {
+  const content = $("#adminContent");
+  if (!content) return;
+  if (!state.menuCategories.length) {
+    content.innerHTML = `${buildAdminListSummaryCard({
+      title: "Menu Categories",
+      count: 0,
+      description: "No menu categories are configured. Add a category to begin creating the menu."
+    })}`;
+    return;
+  }
+  content.innerHTML = `
+    ${buildAdminListSummaryCard({
+      title: "Menu Categories",
+      count: state.menuCategories.length,
+      description: "Authoritative hotel-scoped ordering for Manager, Staff, Take Order, Website, and QR."
+    })}
+    <div class="admin-grid">
+      ${state.menuCategories.map((category) => `
+        <article class="admin-card">
+          <h3>${escapeHTML(category.name)}</h3>
+          <div class="admin-meta">${escapeHTML(category.key)} • /${escapeHTML(category.slug || "")}</div>
+          <div class="admin-row"><strong>Display Order:</strong> ${escapeHTML(category.displayOrder ?? 0)}</div>
+          <div class="admin-row"><strong>Visible Items:</strong> ${escapeHTML(category.itemCount ?? 0)}</div>
+          <div class="admin-state-list">
+            ${buildBooleanStateBadge(category.isActive, { onLabel: "Active", offLabel: "Inactive", onTone: "success", offTone: "warning" })}
+            ${buildBooleanStateBadge(category.isPublished, { onLabel: "Published", offLabel: "Unpublished", onTone: "success", offTone: "neutral" })}
+            ${buildBooleanStateBadge(category.staffEnabled, { onLabel: "Staff", offLabel: "No Staff", onTone: "success", offTone: "neutral" })}
+            ${buildBooleanStateBadge(category.websiteEnabled, { onLabel: "Website", offLabel: "No Website", onTone: "success", offTone: "neutral" })}
+            ${buildBooleanStateBadge(category.qrEnabled, { onLabel: "QR", offLabel: "No QR", onTone: "success", offTone: "neutral" })}
+          </div>
+          <div class="admin-row"><strong>Fallback Image:</strong> ${escapeHTML(category.defaultImage?.cardUrl || "Global food placeholder")}</div>
+          <div class="status-row admin-card-actions">
+            <button class="status-btn" data-edit-menu-category data-id="${escapeHTML(category.reference)}">Edit Category</button>
+            <button class="status-btn" data-delete-menu-category data-id="${escapeHTML(category.reference)}"
+              ${Number(category.itemCount || 0) > 0 ? "disabled" : ""}
+              title="${Number(category.itemCount || 0) > 0 ? "Move menu items or archive this category before deleting it" : "Permanently delete this empty category"}">
+              Delete Empty Category
+            </button>
+          </div>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
 function renderMenuItems() {
   const content = $("#adminContent");
   if (!content) return;
@@ -5359,7 +5472,10 @@ function bindHotelFilter() {
   if (!select) return;
 
   select.addEventListener("change", async () => {
+    state.menuCategories = [];
+    refreshMenuCategoryOptions();
     syncMenuFormHotelSlug({ force: true });
+    syncMenuCategoryFormHotelSlug({ force: true });
     syncMenuComboFormHotelSlug({ force: true });
     syncGalleryFormHotelSlug({ force: true });
     syncPopupNotificationFormHotelSlug({ force: true });
@@ -5881,6 +5997,7 @@ function bindStatusActions() {
 function bindFormToggles() {
   const hotelBtn = document.getElementById("openHotelFormBtn");
   const menuBtn = document.getElementById("openMenuFormBtn");
+  const menuCategoryBtn = document.getElementById("openMenuCategoryFormBtn");
   const menuComboBtn = document.getElementById("openMenuComboFormBtn");
   const galleryBtn = document.getElementById("openGalleryFormBtn");
   const popupNotificationBtn = document.getElementById("openPopupNotificationFormBtn");
@@ -6070,11 +6187,33 @@ function bindFormToggles() {
   }
 
   if (menuBtn) {
-    menuBtn.addEventListener("click", () => {
+    menuBtn.addEventListener("click", async () => {
       syncMenuFormHotelSlug({ force: true });
+      const hotelSlug = getSelectedHotelSlug();
+      if (hotelSlug) {
+        try {
+          const result = await fetchJson(
+            `${API_BASE}/menu-categories?hotelSlug=${encodeURIComponent(hotelSlug)}`
+          );
+          state.menuCategories = result.categories || [];
+          refreshMenuCategoryOptions();
+        } catch (error) {
+          console.error("Menu category options load failed:", error);
+        }
+      }
       const isVisible = setSectionVisibility("menuFormSection");
       if (isVisible) {
         scrollSectionIntoView("menuFormSection");
+      }
+    });
+  }
+
+  if (menuCategoryBtn) {
+    menuCategoryBtn.addEventListener("click", () => {
+      syncMenuCategoryFormHotelSlug({ force: true });
+      const isVisible = setSectionVisibility("menuCategoryFormSection");
+      if (isVisible) {
+        scrollSectionIntoView("menuCategoryFormSection");
       }
     });
   }
@@ -6416,6 +6555,28 @@ async function updateHotel(id, payload) {
   });
 }
 
+async function createMenuCategory(payload) {
+  return fetchJson(`${API_BASE}/menu-categories`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+}
+
+async function updateMenuCategory(id, payload) {
+  return fetchJson(`${API_BASE}/menu-categories/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+}
+
+async function deleteMenuCategory(id) {
+  return fetchJson(`${API_BASE}/menu-categories/${encodeURIComponent(id)}`, {
+    method: "DELETE"
+  });
+}
+
 async function createMenuItem(payload) {
   return fetchJson(`${API_BASE}/menu-items`, {
     method: "POST",
@@ -6692,6 +6853,103 @@ function bindHotelForm() {
     }
   });
 }
+
+function bindMenuCategoryForm() {
+  const form = document.getElementById("menuCategoryForm");
+  if (!form || form.dataset.bound === "true") return;
+  form.dataset.bound = "true";
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submitButton = event.submitter || form.querySelector('button[type="submit"]');
+    const id = document.getElementById("menuCategoryDbId")?.value.trim() || "";
+    const hotelSlug = document.getElementById("menuCategoryHotelSlugInput")?.value.trim() || "";
+    const categoryKey = document.getElementById("menuCategoryKeyInput")?.value.trim() || "";
+    const imageFile = document.getElementById("menuCategoryImageFileInput")?.files?.[0];
+    const payload = {
+      name: document.getElementById("menuCategoryNameInput")?.value.trim() || "",
+      description: document.getElementById("menuCategoryDescriptionInput")?.value.trim() || "",
+      displayOrder: Number(document.getElementById("menuCategoryDisplayOrderInput")?.value || 0),
+      isActive: document.getElementById("menuCategoryIsActiveInput")?.checked === true,
+      isPublished: document.getElementById("menuCategoryIsPublishedInput")?.checked === true,
+      staffEnabled: document.getElementById("menuCategoryStaffEnabledInput")?.checked === true,
+      websiteEnabled: document.getElementById("menuCategoryWebsiteEnabledInput")?.checked === true,
+      qrEnabled: document.getElementById("menuCategoryQrEnabledInput")?.checked === true,
+      defaultImageUrl: document.getElementById("menuCategoryImageUrlInput")?.value.trim() || "",
+      defaultThumbnailUrl: document.getElementById("menuCategoryThumbnailUrlInput")?.value.trim() || "",
+      imageStoragePath: document.getElementById("menuCategoryImageStoragePathInput")?.value.trim() || "",
+      imageAltText: document.getElementById("menuCategoryImageAltInput")?.value.trim() || ""
+    };
+    const slug = document.getElementById("menuCategorySlugInput")?.value.trim() || "";
+    if (slug) payload.slug = slug;
+
+    try {
+      if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.textContent = imageFile ? "Uploading category image..." : "Saving category...";
+      }
+      if (imageFile) {
+        const uploadResult = await uploadImageFile({
+          hotelSlug,
+          folder: `menu-categories/${categoryKey}`,
+          file: imageFile
+        });
+        payload.defaultImageUrl = uploadResult.file?.publicUrl || "";
+        payload.defaultThumbnailUrl = payload.defaultImageUrl;
+        payload.imageStoragePath = uploadResult.file?.path || "";
+      }
+      if (id) {
+        await updateMenuCategory(id, payload);
+      } else {
+        await createMenuCategory({ ...payload, hotelSlug, categoryKey });
+      }
+      alert(id ? "Menu category updated successfully" : "Menu category created successfully");
+      resetMenuCategoryForm();
+      if (state.activeTab === "menu-categories") await loadTabData();
+    } catch (error) {
+      console.error("Menu category save failed:", error);
+      alert(error.message || "Failed to save menu category");
+    } finally {
+      if (submitButton) {
+        submitButton.disabled = false;
+        submitButton.textContent = "Save Menu Category";
+      }
+    }
+  });
+
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest?.("[data-edit-menu-category]");
+    if (!button) return;
+    const category = state.menuCategories.find(
+      (entry) => String(entry.reference) === String(button.dataset.id || "")
+    );
+    if (!category) return;
+    fillMenuCategoryForm(category);
+    setSectionVisibility("menuCategoryFormSection", true);
+    scrollSectionIntoView("menuCategoryFormSection");
+  });
+}
+
+  document.addEventListener("click", async (event) => {
+    const button = event.target.closest?.("[data-delete-menu-category]");
+    if (!button || button.disabled) return;
+    const category = state.menuCategories.find(
+      (entry) => String(entry.reference) === String(button.dataset.id || "")
+    );
+    if (!category || !window.confirm(`Delete the empty category “${category.name}”? This cannot be undone.`)) return;
+    try {
+      button.disabled = true;
+      button.textContent = "Deleting...";
+      await deleteMenuCategory(category.reference);
+      resetMenuCategoryForm();
+      await loadTabData();
+    } catch (error) {
+      console.error("Menu category delete failed:", error);
+      alert(error.message || "Failed to delete menu category");
+      button.disabled = false;
+      button.textContent = "Delete Empty Category";
+    }
+  });
 
 function bindMenuItemForm() {
   const form = document.getElementById("menuItemForm");
@@ -9739,6 +9997,7 @@ async function initAdmin() {
     bindProfileAboutImageUploadHelpers();
     bindProfileHeroImageUploadHelper();
     bindHotelForm();
+    bindMenuCategoryForm();
     bindMenuItemForm();
     bindMenuComboForm();
     bindRoomTypeForm();
@@ -9758,6 +10017,7 @@ async function initAdmin() {
     bindUploadForm();
     bindUploadedFileDelete();
     syncMenuFormHotelSlug();
+    syncMenuCategoryFormHotelSlug();
     syncMenuComboFormHotelSlug();
     syncGalleryFormHotelSlug();
     syncPopupNotificationFormHotelSlug();
