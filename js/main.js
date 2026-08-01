@@ -1328,12 +1328,21 @@ function normalizeImagePath(src = "") {
   if (!src) return "";
   const trimmed = String(src).trim();
   if (isLikelyRemoteUrl(trimmed)) return trimmed;
+
+  // VS Code Live Server commonly serves the repository root at /frontend/*.html,
+  // while production serves this folder as the web root. Keep backend /img URLs
+  // working in both environments without changing tenant-upload URLs.
+  const isFrontendWorkspacePreview = /^\/frontend(?:\/|$)/i.test(window.location.pathname);
+  if (isFrontendWorkspacePreview && /^\/img\//i.test(trimmed)) {
+    return `./img/${trimmed.slice(5)}`;
+  }
+
   return trimmed.startsWith("/")
     ? trimmed
     : `./${trimmed.replace(/^\.?\//, "")}`;
 }
 
-function createImageMarkup({ src, imageMeta = {}, alt, badge, name }) {
+function createImageMarkup({ src, imageMeta = {}, alt, badge, name, priority = false }) {
   const safeSrc = normalizeImagePath(imageMeta.url || src || "/img/default-food.v1.webp");
   const categoryFallback = normalizeImagePath(imageMeta.categoryFallbackUrl || "");
   const globalFallback = normalizeImagePath(imageMeta.globalFallbackUrl || "/img/default-food.v1.webp");
@@ -1355,7 +1364,8 @@ function createImageMarkup({ src, imageMeta = {}, alt, badge, name }) {
           alt="${safeAlt}"
           width="640"
           height="440"
-          loading="lazy"
+          loading="${priority ? "eager" : "lazy"}"
+          fetchpriority="${priority ? "high" : "low"}"
           decoding="async"
           referrerpolicy="no-referrer"
         />
@@ -2822,6 +2832,16 @@ function getItemQty(id) {
   return getCartItem(id)?.qty || 0;
 }
 
+function refreshRenderedMenuItem(itemId) {
+  if (typeof window.updateRenderedMenuItem === "function") {
+    window.updateRenderedMenuItem(itemId);
+    return;
+  }
+  if (typeof window.renderMenu === "function") {
+    window.renderMenu(getCurrentMenuCategory());
+  }
+}
+
 function addToCart(itemId) {
   if (!isCustomerOrderingEnabled()) {
     HotelOrderingUnavailableModal.open();
@@ -2850,7 +2870,7 @@ function addToCart(itemId) {
 
   saveCart();
   updateCartUI();
-  renderMenu(getCurrentMenuCategory());
+  refreshRenderedMenuItem(itemId);
   return true;
 }
 
@@ -2871,14 +2891,14 @@ function updateCartQty(itemId, delta) {
 
   saveCart();
   updateCartUI();
-  renderMenu(getCurrentMenuCategory());
+  refreshRenderedMenuItem(itemId);
 }
 
 function removeFromCart(itemId) {
   CART = CART.filter((item) => item.id !== itemId);
   saveCart();
   updateCartUI();
-  renderMenu(getCurrentMenuCategory());
+  refreshRenderedMenuItem(itemId);
 }
 
 function calculateCartTotals(items = CART) {
@@ -4982,14 +5002,15 @@ function initMenuAndCart() {
     };
   });
 
+  const menuBatchSize = window.innerWidth >= 1200 ? 12 : window.innerWidth >= 768 ? 8 : 6;
   const MENU_STATE = {
     activeCategory: getInitialMenuCategory(),
     searchScope: "category",
     query: "",
     selectedTag: "all",
     sortBy: "featured",
-    batchSize: 8,
-    visibleCount: menuMode === "preview" ? previewLimit : 8,
+    batchSize: menuBatchSize,
+    visibleCount: menuMode === "preview" ? previewLimit : menuBatchSize,
   };
   let pendingMenuGridFocusSelectors = [];
   let paymentGatewayScriptPromise = null;
@@ -7460,6 +7481,8 @@ function initMenuAndCart() {
 
     const cards = $$(".menu-card", grid);
     cards.forEach((card) => {
+      if (card.dataset.menuInteractionBound === "true") return;
+      card.dataset.menuInteractionBound = "true";
       card.addEventListener("mouseenter", () => {
         const ring = $("#cursorRing");
         if (ring) ring.classList.add("hovered");
@@ -7509,13 +7532,14 @@ function initMenuAndCart() {
       Number(item.savings || 0) > 0;
 
     return `
-      <article class="menu-card" role="article" style="animation-delay:${index * 0.05}s">
+      <article class="menu-card" role="article" data-menu-item-id="${escapeAttr(item.id)}" style="animation-delay:${Math.min(index % MENU_STATE.batchSize, 7) * 0.04}s">
         ${createImageMarkup({
           src: item.image,
           imageMeta: item.imageMeta,
           alt: item.alt || item.name,
           badge: item.badge,
           name: item.name,
+          priority: index < 4,
         })}
 
         <div class="menu-card-body">
@@ -7597,11 +7621,49 @@ function initMenuAndCart() {
     `;
   }
 
+  window.updateRenderedMenuItem = function updateRenderedMenuItem(itemId) {
+    const item = ALL_ITEMS.find((entry) => String(entry.id) === String(itemId));
+    if (!item) return;
+    const qty = getItemQty(item.id);
+    const actionsMarkup = !isCustomerOrderingEnabled()
+      ? `
+        <button
+          type="button"
+          class="btn btn-primary menu-add-btn hotel-ordering-disabled-btn"
+          data-ordering-disabled="true"
+          aria-disabled="true"
+        >
+          ${escapeHTML(getOrderingUnavailableActionLabel())}
+        </button>
+      `
+      : qty > 0
+        ? `
+          <div class="qty-control">
+            <button type="button" class="qty-btn" data-minus="${escapeAttr(item.id)}" aria-label="Decrease quantity">&minus;</button>
+            <span class="qty-value">${qty}</span>
+            <button type="button" class="qty-btn" data-plus="${escapeAttr(item.id)}" aria-label="Increase quantity">+</button>
+          </div>
+          <button type="button" class="remove-mini-btn" data-remove="${escapeAttr(item.id)}">Remove</button>
+        `
+        : `
+          <button type="button" class="btn btn-primary menu-add-btn" data-add="${escapeAttr(item.id)}">
+            Add
+          </button>
+        `;
+
+    $$("[data-menu-item-id]", grid)
+      .filter((card) => String(card.dataset.menuItemId) === String(itemId))
+      .forEach((card) => {
+        const actions = $(".menu-card-actions", card);
+        if (actions) actions.innerHTML = actionsMarkup;
+      });
+  };
+
   window.renderMenu = function renderMenu(
     category = MENU_STATE.activeCategory,
     options = {},
   ) {
-    const { resetVisible = false } = options;
+    const { resetVisible = false, append = false } = options;
     const nextCategory = availableCategories.includes(category)
       ? category
       : availableCategories.includes(MENU_STATE.activeCategory)
@@ -7628,15 +7690,27 @@ function initMenuAndCart() {
     if (!filteredItems.length) {
       updateResultsSummary(filteredItems, visibleItems);
       if (loadMoreBtn) loadMoreBtn.hidden = true;
+      grid.dataset.renderedCount = "0";
       if (scrollHint) scrollHint.hidden = true;
       renderEmptyState();
       restorePendingMenuGridFocus();
       return;
     }
 
-    grid.innerHTML = visibleItems
-      .map((item, i) => createMenuCard(item, i, showCategoryPill))
+    const renderedCount = Number(grid.dataset.renderedCount || 0);
+    const canAppend = append && renderedCount > 0 && renderedCount <= visibleItems.length;
+    const renderStart = canAppend ? renderedCount : 0;
+    const cardsMarkup = visibleItems
+      .slice(renderStart)
+      .map((item, i) => createMenuCard(item, renderStart + i, showCategoryPill))
       .join("");
+
+    if (canAppend) {
+      grid.insertAdjacentHTML("beforeend", cardsMarkup);
+    } else {
+      grid.innerHTML = cardsMarkup;
+    }
+    grid.dataset.renderedCount = String(visibleItems.length);
 
     initManagedImages(grid);
 
@@ -7783,7 +7857,7 @@ function initMenuAndCart() {
     loadMoreBtn.addEventListener("click", () => {
       if (shouldUsePreviewMode()) return;
       MENU_STATE.visibleCount += MENU_STATE.batchSize;
-      renderMenu(MENU_STATE.activeCategory);
+      renderMenu(MENU_STATE.activeCategory, { append: true });
     });
   }
 
