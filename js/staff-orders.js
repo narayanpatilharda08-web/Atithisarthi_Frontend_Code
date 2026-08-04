@@ -177,8 +177,14 @@ const STAFF_STATE = {
     manual: { total: 0, pending: 0, today: 0 },
     legacy: { total: 0, pending: 0, today: 0 }
   },
-  roomBookingPagination: { page: 1, limit: 50, total: 0, totalPages: 1, hasPrevious: false, hasNext: false },
+  roomBookingPagination: { page: 1, limit: 25, total: 0, totalPages: 1, hasPrevious: false, hasNext: false },
+  roomBookingUrlInitialized: false,
   roomBookingSummaryInitialized: false,
+  roomBookingDetails: {},
+  selectedRoomBookingId: "",
+  selectedRoomBookingTrigger: null,
+  roomBookingDetailRequestId: 0,
+  roomBookingListRequestId: 0,
   roomWebsiteFallbackUnread: 0,
   roomOperationsRooms: [],
   roomOperationsPeriod: { checkInDate: "", checkOutDate: "" },
@@ -1556,6 +1562,16 @@ function resetStaffDashboardState() {
   STAFF_STATE.reservations = [];
   STAFF_STATE.rooms = [];
   STAFF_STATE.roomBookings = [];
+  STAFF_STATE.roomBookingSource = "website";
+  STAFF_STATE.roomBookingPage = 1;
+  STAFF_STATE.roomBookingPagination = { page: 1, limit: 25, total: 0, totalPages: 1, hasPrevious: false, hasNext: false };
+  STAFF_STATE.roomBookingUrlInitialized = false;
+  STAFF_STATE.roomBookingSummaryInitialized = false;
+  STAFF_STATE.roomBookingDetails = {};
+  STAFF_STATE.selectedRoomBookingId = "";
+  STAFF_STATE.selectedRoomBookingTrigger = null;
+  STAFF_STATE.roomBookingDetailRequestId += 1;
+  STAFF_STATE.roomBookingListRequestId += 1;
   STAFF_STATE.roomOperationsRooms = [];
   STAFF_STATE.roomOperationsPeriod = { checkInDate: "", checkOutDate: "" };
   STAFF_STATE.roomOperationsView = "home";
@@ -6195,18 +6211,18 @@ function getStaffRoomBookingFilterValues() {
     fromDate: $("#staffRoomsFromDateInput")?.value || "",
     toDate: $("#staffRoomsToDateInput")?.value || "",
     page: Math.max(1, Number(STAFF_STATE.roomBookingPage || 1) || 1),
-    limit: $("#staffRoomsLimitInput")?.value || "50"
+    limit: $("#staffRoomsLimitInput")?.value || "25"
   };
 }
 
 function buildStaffRoomBookingQueryString() {
   const filters = getStaffRoomBookingFilterValues();
   const params = new URLSearchParams();
-  const limit = Number(filters.limit || 50);
+  const limit = Number(filters.limit || 25);
 
   params.set("source", filters.source);
   params.set("page", String(filters.page));
-  params.set("limit", Number.isInteger(limit) && limit >= 1 && limit <= 100 ? String(limit) : "50");
+  params.set("limit", Number.isInteger(limit) && limit >= 15 && limit <= 50 ? String(limit) : "25");
   params.set("sort", filters.sort || "created_desc");
   if (filters.status && filters.status !== "all") params.set("status", filters.status);
   if (filters.paymentStatus && filters.paymentStatus !== "all" && isStaffManagerSession()) {
@@ -6216,6 +6232,52 @@ function buildStaffRoomBookingQueryString() {
   if (filters.fromDate) params.set("fromDate", filters.fromDate);
   if (filters.toDate) params.set("toDate", filters.toDate);
   return params.toString();
+}
+
+function restoreStaffRoomBookingFiltersFromUrl() {
+  if (STAFF_STATE.roomBookingUrlInitialized) return;
+  STAFF_STATE.roomBookingUrlInitialized = true;
+  const params = new URL(window.location.href).searchParams;
+  const controls = [
+    ["roomStatus", "#staffRoomsStatusInput"],
+    ["roomPayment", "#staffRoomsPaymentStatusInput"],
+    ["roomSearch", "#staffRoomsSearchInput"],
+    ["roomSort", "#staffRoomsSortInput"],
+    ["roomFrom", "#staffRoomsFromDateInput"],
+    ["roomTo", "#staffRoomsToDateInput"],
+    ["roomLimit", "#staffRoomsLimitInput"]
+  ];
+  controls.forEach(([paramName, selector]) => {
+    const value = params.get(paramName);
+    const control = $(selector);
+    if (value === null || !control) return;
+    if (control instanceof HTMLSelectElement && ![...control.options].some((option) => option.value === value)) return;
+    control.value = value;
+  });
+  const page = Number(params.get("roomPage") || 1);
+  STAFF_STATE.roomBookingPage = Number.isInteger(page) && page > 0 ? page : 1;
+}
+
+function syncStaffRoomBookingUrl({ bookingId, removeBooking = false } = {}) {
+  const filters = getStaffRoomBookingFilterValues();
+  const url = new URL(window.location.href);
+  const values = {
+    roomStatus: filters.status,
+    roomPayment: isStaffManagerSession() ? filters.paymentStatus : "all",
+    roomSearch: filters.search,
+    roomSort: filters.sort,
+    roomFrom: filters.fromDate,
+    roomTo: filters.toDate,
+    roomLimit: String(filters.limit || 25),
+    roomPage: String(filters.page || 1)
+  };
+  Object.entries(values).forEach(([key, value]) => {
+    if (!value || value === "all" || (key === "roomSort" && value === "created_desc")) url.searchParams.delete(key);
+    else url.searchParams.set(key, value);
+  });
+  if (removeBooking) url.searchParams.delete("roomBooking");
+  else if (bookingId !== undefined) url.searchParams.set("roomBooking", String(bookingId));
+  window.history.replaceState({ ...(window.history.state || {}), roomView: "bookings", roomSource: STAFF_STATE.roomBookingSource }, "", url);
 }
 
 function getStaffVisibleRoomBookings() {
@@ -6445,6 +6507,7 @@ function selectStaffRoomBookingSource(source = "website", { historyMode = "push"
   const safeSource = ["website", "manual", "legacy"].includes(source) ? source : "website";
   STAFF_STATE.roomBookingSource = safeSource;
   STAFF_STATE.roomBookingPage = 1;
+  restoreStaffRoomBookingFiltersFromUrl();
   renderStaffRoomBookingSourceHub();
 
   if (historyMode !== "none") {
@@ -8936,70 +8999,265 @@ function buildStaffRoomCard(room = {}) {
   `;
 }
 
+function buildStaffRoomBookingDetailField(label = "", value = "") {
+  const safeValue = value === null || value === undefined || value === "" ? "Not provided" : String(value);
+  return '<div class="staff-room-booking-detail-field"><span>' + escapeHTML(label) +
+    '</span><strong>' + escapeHTML(safeValue) + '</strong></div>';
+}
+
+function buildStaffRoomBookingDetailSection(title = "", fields = [], extraMarkup = "") {
+  const sectionKey = String(title || "section").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return '<section class="staff-room-booking-detail-section" data-staff-room-booking-detail-section="' +
+    escapeHTML(sectionKey) + '" tabindex="-1"><h5>' + escapeHTML(title) + '</h5>' +
+    (fields.length ? '<div class="staff-room-booking-detail-grid">' +
+      fields.map((field) => buildStaffRoomBookingDetailField(field[0], field[1])).join("") +
+      '</div>' : "") + extraMarkup + '</section>';
+}
+
+function buildStaffRoomBookingPaymentsMarkup(payments = []) {
+  if (!payments.length) return '<p class="staff-hint">No payment entries have been recorded.</p>';
+  return '<ul class="staff-room-booking-payment-list">' + payments.map((payment) => {
+    const details = [
+      getStaffRecordStatusLabel(payment.payment_method || "other"),
+      getStaffRecordStatusLabel(payment.payment_status || "recorded"),
+      formatOrderDate(payment.paid_at || payment.created_at)
+    ].filter(Boolean).join(" · ");
+    return '<li><span><strong>' + escapeHTML(formatMoney(payment.amount || 0)) +
+      '</strong><small>' + escapeHTML(details) + '</small></span>' +
+      (payment.transaction_id ? '<small>Txn ' + escapeHTML(payment.transaction_id) + '</small>' : "") +
+      '</li>';
+  }).join("") + '</ul>';
+}
+
+function buildStaffRoomBookingActivityMarkup(activity = []) {
+  if (!activity.length) return '<p class="staff-hint">Booking creation is the only recorded activity available.</p>';
+  return '<ul class="staff-room-booking-activity-list">' + activity.map((item) => {
+    const detail = [
+      item.actorRole ? getStaffRecordStatusLabel(item.actorRole) : "",
+      item.paymentMethod ? getStaffRecordStatusLabel(item.paymentMethod) : "",
+      Number(item.amount || 0) > 0 ? formatMoney(item.amount) : "",
+      item.reason || ""
+    ].filter(Boolean).join(" · ");
+    return '<li><span><strong>' + escapeHTML(item.label || "Booking updated") +
+      '</strong>' + (detail ? '<small>' + escapeHTML(detail) + '</small>' : "") +
+      '</span><small>' + escapeHTML(formatOrderDate(item.timestamp)) + '</small></li>';
+  }).join("") + '</ul>';
+}
+
+function buildStaffRoomBookingDetailMarkup(detail = {}) {
+  const booking = detail.booking || {};
+  const room = detail.room || {};
+  const permissions = detail.permissions || {};
+  const canManage = permissions.canManageBooking === true && isStaffManagerSession();
+  const canViewFinancials = permissions.canViewFinancials === true;
+  const hasFinancialFields = canViewFinancials && Object.prototype.hasOwnProperty.call(booking, "total_amount");
+  const sourceLabel = booking.booking_source_label || booking.booking_source || "Legacy / Unknown";
+  const roomNumber = room.room_number || booking.room_number || booking.room_id || "Unassigned";
+  const roomType = room.title || room.room_type_id || "Not set";
+  const taxSnapshot = booking.tax_snapshot && typeof booking.tax_snapshot === "object" ? booking.tax_snapshot : {};
+  const overview = buildStaffRoomBookingDetailSection("Overview", [
+    ["Booking reference", "#" + (booking.id || "")],
+    ["Source", sourceLabel],
+    ["Booking status", getStaffRecordStatusLabel(booking.booking_status || "pending")],
+    ["Payment status", canViewFinancials ? getStaffRecordStatusLabel(booking.payment_status || "unpaid") : "Manager-only"],
+    ["Created", formatOrderDate(booking.created_at)],
+    ["Last updated", formatOrderDate(booking.updated_at)]
+  ]);
+  const guestFields = [
+    ["Guest name", booking.guest_name],
+    ["Phone", booking.guest_phone],
+    ["Email", booking.guest_email],
+    ["Company", booking.guest_company_name]
+  ];
+  if (canViewFinancials) guestFields.push(["GSTIN", booking.guest_gstin], ["Place of supply", booking.guest_place_of_supply]);
+  if (permissions.canViewIdentityProof === true) guestFields.push(["Identity proof", booking.guest_id_proof]);
+  const guest = buildStaffRoomBookingDetailSection("Guest", guestFields);
+  const stay = buildStaffRoomBookingDetailSection("Stay & Room", [
+    ["Check-in", booking.check_in_date],
+    ["Check-out", booking.check_out_date],
+    ["Nights", Number(booking.total_nights || 0)],
+    ["Assigned room", "Room " + roomNumber],
+    ["Room type", roomType],
+    ["Floor", room.floor || "Not set"],
+    ["Guests", String(Number(booking.adults || 0)) + " adults · " + String(Number(booking.children || 0)) + " children"]
+  ]);
+  const pricing = canViewFinancials
+    ? buildStaffRoomBookingDetailSection("Pricing & GST", [
+        ["Room subtotal", formatMoney(booking.room_price || 0)],
+        ["Discount", formatMoney(booking.discount_amount || 0)],
+        ["Tax", formatMoney(booking.tax_amount || 0)],
+        ["Total", formatMoney(booking.total_amount || 0)],
+        ["Advance paid", formatMoney(booking.advance_paid || 0)],
+        ["Balance", formatMoney(booking.balance_amount || 0)],
+        ["Pricing version", booking.pricing_version || "Not set"],
+        ["GST rule", taxSnapshot.ruleName || taxSnapshot.rule_name || booking.tax_rule_id || "Not set"]
+      ])
+    : buildStaffRoomBookingDetailSection("Pricing & GST", [], '<p class="staff-hint">Financial and GST details are available to Managers only.</p>');
+  const payments = buildStaffRoomBookingDetailSection("Payments", [],
+    canViewFinancials ? buildStaffRoomBookingPaymentsMarkup(Array.isArray(detail.payments) ? detail.payments : [])
+      : '<p class="staff-hint">Payment history is available to Managers only.</p>');
+  const specialRequests = buildStaffRoomBookingDetailSection("Special Requests", [],
+    booking.notes ? '<p class="staff-order-note">' + escapeHTML(booking.notes) + '</p>'
+      : '<p class="staff-hint">No special requests or booking notes.</p>');
+  const activity = buildStaffRoomBookingDetailSection("Activity History", [],
+    buildStaffRoomBookingActivityMarkup(Array.isArray(detail.activity) ? detail.activity : []));
+  let actions = "";
+  if (canManage) {
+    const cachedSummary = STAFF_STATE.roomCheckoutSummaries?.[String(booking.id || "")];
+    const cachedBill = STAFF_STATE.roomCheckoutBills?.[String(booking.id || "")];
+    const cachedMarkup = cachedSummary && cachedBill ? buildStaffRoomCheckoutSummaryMarkup(cachedSummary, cachedBill) : "";
+    actions = '<section class="staff-room-booking-detail-section"><h5>Management Actions</h5>' +
+      '<article class="staff-order-card staff-room-booking-detail-actions-card">' +
+      buildStaffRoomBookingStatusControls(booking) +
+      (hasFinancialFields ? buildStaffRoomBookingPaymentControls(booking) : "") +
+      (hasFinancialFields ? buildStaffRoomBookingRefundControls(booking) : "") +
+      (hasFinancialFields ? buildStaffRoomCheckoutSummaryControls(booking) : "") +
+      '<div class="staff-room-checkout-summary" data-staff-room-checkout-summary="' +
+      escapeHTML(booking.id || "") + '"' + (cachedMarkup ? "" : " hidden") + '>' +
+      cachedMarkup + '</div></article></section>';
+  }
+  return overview + guest + stay + pricing + payments + specialRequests + activity + actions;
+}
+
+function finishStaffRoomBookingDetailClose() {
+  STAFF_STATE.roomBookingDetailRequestId += 1;
+  document.querySelectorAll(".staff-room-booking-summary-card.is-selected").forEach((card) => {
+    card.classList.remove("is-selected");
+    card.removeAttribute("aria-current");
+  });
+  STAFF_STATE.selectedRoomBookingId = "";
+  const trigger = STAFF_STATE.selectedRoomBookingTrigger;
+  STAFF_STATE.selectedRoomBookingTrigger = null;
+  syncStaffRoomBookingUrl({ removeBooking: true });
+  trigger?.focus?.();
+}
+
+function closeStaffRoomBookingDetail() {
+  const dialog = $("#staffRoomBookingDetailDialog");
+  if (dialog?.open && typeof dialog.close === "function") { dialog.close(); return; }
+  dialog?.removeAttribute("open");
+  finishStaffRoomBookingDetailClose();
+}
+
+async function openStaffRoomBookingDetail(bookingId = "", trigger = null) {
+  const safeBookingId = String(bookingId || "").trim();
+  const dialog = $("#staffRoomBookingDetailDialog");
+  const title = $("#staffRoomBookingDetailTitle");
+  const source = $("#staffRoomBookingDetailSource");
+  const content = $("#staffRoomBookingDetailContent");
+  if (!safeBookingId || !dialog || !content) return;
+  const summary = STAFF_STATE.roomBookings.find((booking) => String(booking.id) === safeBookingId) || {};
+  STAFF_STATE.selectedRoomBookingId = safeBookingId;
+  STAFF_STATE.selectedRoomBookingTrigger = trigger instanceof HTMLElement ? trigger : null;
+  syncStaffRoomBookingUrl({ bookingId: safeBookingId });
+  if (title) title.textContent = "Booking #" + safeBookingId;
+  if (source) source.textContent = summary.booking_source_label || getStaffRoomBookingSourceLabel();
+  document.querySelectorAll(".staff-room-booking-summary-card.is-selected").forEach((card) => {
+    const selected = String(card.dataset.bookingId || "") === safeBookingId;
+    card.classList.toggle("is-selected", selected);
+    if (selected) card.setAttribute("aria-current", "true");
+    else card.removeAttribute("aria-current");
+  });
+  const cachedCandidate = STAFF_STATE.roomBookingDetails?.[safeBookingId];
+  const summaryVersion = String(summary.version || summary.updated_at || "");
+  const cachedVersion = String(cachedCandidate?.version || cachedCandidate?.booking?.version || cachedCandidate?.booking?.updated_at || "");
+  const cached = cachedCandidate && (!summaryVersion || summaryVersion === cachedVersion) ? cachedCandidate : null;
+  if (cachedCandidate && !cached) delete STAFF_STATE.roomBookingDetails[safeBookingId];
+  content.setAttribute("aria-busy", "true");
+  content.innerHTML = cached ? buildStaffRoomBookingDetailMarkup(cached) :
+    '<div class="staff-room-booking-detail-skeleton" aria-hidden="true"></div>' +
+    '<div class="staff-room-booking-detail-skeleton" aria-hidden="true"></div>' +
+    '<p class="staff-status">Loading authorized booking details…</p>';
+  if (typeof dialog.showModal === "function") {
+    if (!dialog.open) dialog.showModal();
+  } else dialog.setAttribute("open", "");
+  title?.focus?.();
+  const requestId = ++STAFF_STATE.roomBookingDetailRequestId;
+  try {
+    const detail = await staffFetchJson(STAFF_API_BASE + "/room-booking/bookings/" + encodeURIComponent(safeBookingId));
+    if (requestId !== STAFF_STATE.roomBookingDetailRequestId ||
+        STAFF_STATE.selectedRoomBookingId !== safeBookingId || !dialog.open) return;
+    STAFF_STATE.roomBookingDetails = { ...STAFF_STATE.roomBookingDetails, [safeBookingId]: detail };
+    content.innerHTML = buildStaffRoomBookingDetailMarkup(detail);
+    const requestedSection = String(trigger?.dataset?.staffRoomBookingDetailSection || "").trim();
+    if (requestedSection) {
+      window.requestAnimationFrame(() => {
+        const section = content.querySelector('[data-staff-room-booking-detail-section="' + CSS.escape(requestedSection) + '"]');
+        section?.focus?.({ preventScroll: true });
+        const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
+        section?.scrollIntoView?.({ block: "start", behavior: reduceMotion ? "auto" : "smooth" });
+      });
+    }
+  } catch (error) {
+    if (requestId !== STAFF_STATE.roomBookingDetailRequestId) return;
+    console.error("Staff room booking detail load failed:", error);
+    content.innerHTML = '<div class="staff-status is-error">' +
+      escapeHTML(error.message || "Booking details could not be loaded.") +
+      '</div><button class="staff-btn secondary" type="button" data-staff-retry-room-booking-detail="' +
+      escapeHTML(safeBookingId) + '">Retry</button>';
+  } finally {
+    if (requestId === STAFF_STATE.roomBookingDetailRequestId) content.setAttribute("aria-busy", "false");
+  }
+}
+
+async function refreshStaffRoomBookingAfterAction(bookingId = "") {
+  const safeBookingId = String(bookingId || "").trim();
+  await loadStaffRoomBookings({ silent: true });
+  const dialog = $("#staffRoomBookingDetailDialog");
+  if (safeBookingId && dialog?.open && STAFF_STATE.selectedRoomBookingId === safeBookingId) {
+    const latestTrigger = document.querySelector(
+      '[data-staff-room-booking-detail="' + CSS.escape(safeBookingId) + '"]'
+    );
+    await openStaffRoomBookingDetail(
+      safeBookingId,
+      latestTrigger || STAFF_STATE.selectedRoomBookingTrigger
+    );
+  }
+}
 function buildStaffRoomBookingCard(booking = {}) {
   const status = normalizeStatus(booking.booking_status) || "pending";
   const sourceGroup = normalizeStatus(booking.booking_source_group || "legacy");
   const sourceLabel = booking.booking_source_label || booking.booking_source || "Legacy / Unknown";
-  const isUnreadWebsiteBooking = sourceGroup === "website" && getStaffNotificationCardUnread("website-room-bookings") > 0;
-  const statusBadgeClass = getStaffRecordStatusBadgeClass(status, "room-booking");
+  const isUnread = sourceGroup === "website" && getStaffNotificationCardUnread("website-room-bookings") > 0;
+  const statusClass = getStaffRecordStatusBadgeClass(status, "room-booking");
   const paymentStatus = normalizeStatus(booking.payment_status || "");
-  const roomNumber = booking.rooms?.room_number || booking.room_number || booking.room_id || "";
-  const canUpdateStatus = isStaffManagerSession();
-  const hasFinancialFields =
-    Object.prototype.hasOwnProperty.call(booking, "total_amount") ||
-    Object.prototype.hasOwnProperty.call(booking, "balance_amount") ||
-    Object.prototype.hasOwnProperty.call(booking, "payment_status");
-  const negotiatedRate = booking.pricing_snapshot?.negotiatedRate || null;
-  const hasNegotiatedRate =
-    hasFinancialFields &&
-    negotiatedRate?.applied === true;
-  const configuredNightlyPrices = Array.isArray(negotiatedRate?.configuredNightlyPrices)
-    ? negotiatedRate.configuredNightlyPrices
-    : [];
-  const configuredRateLabel = configuredNightlyPrices.length === 1
-    ? formatMoney(configuredNightlyPrices[0])
-    : "variable configured rates";
-  const cachedCheckoutSummary = STAFF_STATE.roomCheckoutSummaries?.[String(booking.id || "")];
-  const cachedCheckoutBill = STAFF_STATE.roomCheckoutBills?.[String(booking.id || "")];
-  const cachedCheckoutMarkup = cachedCheckoutSummary && cachedCheckoutBill
-    ? buildStaffRoomCheckoutSummaryMarkup(cachedCheckoutSummary, cachedCheckoutBill)
-    : "";
-
-  return `
-    <article class="staff-order-card${isUnreadWebsiteBooking ? " has-fresh-data" : ""}" data-booking-source-group="${escapeHTML(sourceGroup)}">
-      <div class="staff-order-topline">
-        <h3 class="staff-order-title">Booking #${escapeHTML(booking.id || "")}</h3>
-        <span class="staff-order-time">${escapeHTML(formatOrderDate(booking.created_at || booking.createdAt))}</span>
-      </div>
-
-      <div class="staff-order-badges">
-        <span class="staff-badge is-important">Room: ${escapeHTML(roomNumber || "Not provided")}</span>
-        <span class="staff-badge">Check-in: ${escapeHTML(booking.check_in_date || "Not provided")}</span>
-        <span class="staff-badge">Check-out: ${escapeHTML(booking.check_out_date || "Not provided")}</span>
-        <span class="staff-badge ${statusBadgeClass}">Status: ${escapeHTML(getStaffRecordStatusLabel(status))}</span>
-        ${hasFinancialFields ? `<span class="staff-badge ${paymentStatus === "paid" ? "is-success" : "is-warning"}">Payment: ${escapeHTML(getStaffRecordStatusLabel(paymentStatus || "unpaid"))}</span>` : ""}
-        ${hasNegotiatedRate ? '<span class="staff-badge is-important">Manager negotiated rate</span>' : ""}
-      </div>
-
-      <div class="staff-order-meta">
-        <span>Guest: ${escapeHTML(booking.guest_name || "Not provided")}</span>
-        <span>Phone: ${escapeHTML(booking.guest_phone || "Not provided")}</span>
-        <span>Guests: ${escapeHTML(`${booking.adults ?? 0} adults, ${booking.children ?? 0} children`)}</span>
-        <span>Source: ${escapeHTML(sourceLabel)}</span>
-      </div>
-
-      ${hasFinancialFields ? `<p class="staff-order-note"><strong>Total:</strong> ${escapeHTML(formatMoney(booking.total_amount || 0))} | <strong>Balance:</strong> ${escapeHTML(formatMoney(booking.balance_amount || 0))}</p>` : ""}
-      ${hasNegotiatedRate ? `<p class="staff-order-note"><strong>Nightly rate:</strong> ${escapeHTML(configuredRateLabel)} ? ${escapeHTML(formatMoney(negotiatedRate.nightlyRate || 0))} | <strong>Discount:</strong> ${escapeHTML(formatMoney(booking.discount_amount || 0))} | <strong>Reason:</strong> ${escapeHTML(negotiatedRate.reason || "Manager approved")}</p>` : ""}
-      ${booking.notes ? `<p class="staff-order-note"><strong>Notes:</strong> ${escapeHTML(booking.notes)}</p>` : ""}
-      ${canUpdateStatus ? buildStaffRoomBookingStatusControls(booking) : ""}
-      ${canUpdateStatus && hasFinancialFields ? buildStaffRoomBookingPaymentControls(booking) : ""}
-      ${canUpdateStatus && hasFinancialFields ? buildStaffRoomBookingRefundControls(booking) : ""}
-      ${canUpdateStatus && hasFinancialFields ? buildStaffRoomCheckoutSummaryControls(booking) : ""}
-      <div class="staff-room-checkout-summary" data-staff-room-checkout-summary="${escapeHTML(booking.id || "")}" ${cachedCheckoutMarkup ? "" : "hidden"}>${cachedCheckoutMarkup}</div>
-    </article>
-  `;
+  const hasFinancials = Object.prototype.hasOwnProperty.call(booking, "payment_status");
+  const roomLabel = booking.room_number ? "Room " + booking.room_number :
+    booking.room_id ? "Room ID " + booking.room_id : "Unassigned";
+  const roomType = booking.room_type ? " · " + booking.room_type : "";
+  const guests = String(Number(booking.adults || 0) + Number(booking.children || 0));
+  const actionRequired = String(booking.action_required || "").trim();
+  return '<article class="staff-room-booking-summary-card' + (isUnread ? " has-fresh-data" : "") +
+    '" data-booking-source-group="' + escapeHTML(sourceGroup) + '" data-booking-id="' + escapeHTML(booking.id || "") + '">' +
+    '<div class="staff-room-booking-summary-primary"><div class="staff-room-booking-summary-reference"><strong>' +
+    escapeHTML(booking.booking_reference || ("#" + (booking.id || ""))) + '</strong><span class="staff-badge">' +
+    escapeHTML(sourceLabel) + '</span></div><span class="staff-room-booking-summary-guest">' +
+    escapeHTML(booking.guest_name || "Guest name not provided") + '</span><span class="staff-room-booking-summary-created">Created ' +
+    escapeHTML(formatOrderDate(booking.created_at || booking.createdAt)) + '</span></div>' +
+    '<div class="staff-room-booking-summary-facts">' +
+    '<div class="staff-room-booking-summary-fact"><span>Stay</span><strong>' +
+    escapeHTML((booking.check_in_date || "—") + " → " + (booking.check_out_date || "—")) + '</strong></div>' +
+    '<div class="staff-room-booking-summary-fact"><span>Room</span><strong>' + escapeHTML(roomLabel + roomType) + '</strong></div>' +
+    '<div class="staff-room-booking-summary-fact"><span>Guests / nights</span><strong>' +
+    escapeHTML(guests + " guests · " + Number(booking.total_nights || 0) + " nights") + '</strong></div>' +
+    '<div class="staff-room-booking-summary-fact"><span>Booking</span><strong><span class="staff-badge ' +
+    escapeHTML(statusClass) + '">' + escapeHTML(getStaffRecordStatusLabel(status)) + '</span></strong></div>' +
+    '<div class="staff-room-booking-summary-fact"><span>Payment</span><strong>' +
+    (hasFinancials ? '<span class="staff-badge ' + (paymentStatus === "paid" ? "is-success" : "is-warning") + '">' +
+      escapeHTML(getStaffRecordStatusLabel(paymentStatus || "unpaid")) + '</span>' : "Manager-only") + '</strong></div>' +
+    '<div class="staff-room-booking-summary-fact"><span>Advance / balance</span><strong>' +
+    (hasFinancials ? escapeHTML(formatMoney(booking.advance_paid || 0) + " / " + formatMoney(booking.balance_amount || 0)) : "Manager-only") + '</strong></div></div>' +
+    '<div class="staff-room-booking-summary-actions">' +
+    (actionRequired ? '<span class="staff-room-booking-action-required">' + escapeHTML(actionRequired) + '</span>' : '<span></span>') +
+    '<div class="staff-room-booking-summary-action-row"><button class="staff-btn secondary" type="button" data-staff-room-booking-detail="' + escapeHTML(booking.id || "") +
+    '" aria-label="Open booking ' + escapeHTML(booking.id || "") + ' details">View Details</button>' +
+    '<details class="staff-room-booking-more"><summary aria-label="More options for booking ' + escapeHTML(booking.id || "") + '">â‹®</summary>' +
+    '<div class="staff-room-booking-more-menu"><button type="button" data-staff-room-booking-detail="' + escapeHTML(booking.id || "") +
+    '" data-staff-room-booking-detail-section="guest">Guest &amp; stay</button>' +
+    (isStaffManagerSession() ? '<button type="button" data-staff-room-booking-detail="' + escapeHTML(booking.id || "") +
+      '" data-staff-room-booking-detail-section="payments">Payments &amp; actions</button>' : "") +
+    '</div></details></div></div></article>';
 }
-
 function buildStaffRoomCheckoutSummaryControls(booking = {}) {
   const bookingId = String(booking.id || "").trim();
 
@@ -9567,46 +9825,14 @@ function renderStaffRecordList(selector, records = [], buildCard, emptyMessage =
 function renderStaffRoomsList(rooms = [], bookings = [], emptyMessage = "No rooms found.") {
   const content = $("#staffRoomsContent");
   if (!content) return;
-
-  if (!rooms.length && !bookings.length) {
+  if (!bookings.length) {
     content.className = "staff-empty staff-section-stage";
     content.textContent = emptyMessage;
     return;
   }
-
-  content.className = "staff-orders-list staff-section-stage";
-  content.innerHTML = [
-    rooms.length
-      ? `
-        <section class="staff-order-group">
-          <div class="staff-order-group-header">
-            <div>
-              <h3 class="staff-order-group-title">Room inventory</h3>
-              <p class="staff-order-group-note">Current room records for this hotel.</p>
-            </div>
-            <span class="staff-order-group-count">${escapeHTML(rooms.length)} room${rooms.length === 1 ? "" : "s"}</span>
-          </div>
-          ${rooms.map(buildStaffRoomCard).join("")}
-        </section>
-      `
-      : "",
-    bookings.length
-      ? `
-        <section class="staff-order-group">
-          <div class="staff-order-group-header">
-            <div>
-              <h3 class="staff-order-group-title">Room bookings</h3>
-              <p class="staff-order-group-note">Bookings loaded from the room booking module.</p>
-            </div>
-            <span class="staff-order-group-count">${escapeHTML(bookings.length)} booking${bookings.length === 1 ? "" : "s"}</span>
-          </div>
-          ${bookings.map(buildStaffRoomBookingCard).join("")}
-        </section>
-      `
-      : ""
-  ].join("");
+  content.className = "staff-room-booking-list staff-section-stage";
+  content.innerHTML = bookings.map(buildStaffRoomBookingCard).join("");
 }
-
 function setStaffRoomBookingStatus(message = "", isError = false) {
   const status = $("#staffRoomBookingStatus");
   if (!status) return;
@@ -10363,7 +10589,7 @@ async function handleStaffRoomBookingStatusUpdate(button) {
     button.disabled = true;
     button.textContent = "Updating...";
     await patchStaffRoomBookingStatus(bookingId, bookingStatus);
-    await loadStaffRooms();
+    await refreshStaffRoomBookingAfterAction(bookingId);
   } catch (error) {
     console.error("Staff room booking status update failed:", error);
     window.alert(error.message || "Failed to update room booking status");
@@ -10446,7 +10672,7 @@ async function handleStaffRoomBookingPayment(button) {
       idempotencyKey
     });
     delete button.dataset.paymentRequestId;
-    await loadStaffRooms();
+    await refreshStaffRoomBookingAfterAction(bookingId);
   } catch (error) {
     console.error("Staff room booking payment failed:", error);
     window.alert(error.message || "Failed to record room booking payment");
@@ -10495,7 +10721,7 @@ async function handleStaffRoomBookingRefund(button) {
     if (result.creditNote?.creditNoteNumber) {
       window.alert(`Refund recorded. Credit note: ${result.creditNote.creditNoteNumber}`);
     }
-    await loadStaffRooms();
+    await refreshStaffRoomBookingAfterAction(bookingId);
   } catch (error) {
     console.error("Staff room refund failed:", error);
     window.alert(error.message || "Failed to record Room refund");
@@ -13565,7 +13791,7 @@ function applyStaffRoomBookingListResult(result = {}) {
   setStaffRoomBookingSessionCount("unread", STAFF_STATE.roomWebsiteFallbackUnread);
   STAFF_STATE.roomBookingPagination = result.pagination && typeof result.pagination === "object"
     ? result.pagination
-    : { page: STAFF_STATE.roomBookingPage, limit: Number($("#staffRoomsLimitInput")?.value || 50), total: STAFF_STATE.roomBookings.length, totalPages: 1, hasPrevious: false, hasNext: false };
+    : { page: STAFF_STATE.roomBookingPage, limit: Number($("#staffRoomsLimitInput")?.value || 25), total: STAFF_STATE.roomBookings.length, totalPages: 1, hasPrevious: false, hasNext: false };
   STAFF_STATE.roomBookingPage = Math.max(1, Number(STAFF_STATE.roomBookingPagination.page || 1) || 1);
   renderStaffNotificationCards();
 }
@@ -13574,6 +13800,9 @@ async function loadStaffRoomBookings({ silent = false } = {}) {
   const filters = getStaffRoomBookingFilterValues();
   const content = $("#staffRoomsContent");
   const status = $("#staffRoomBookingSourceStatus");
+  const requestId = ++STAFF_STATE.roomBookingListRequestId;
+  const queryString = buildStaffRoomBookingQueryString();
+  syncStaffRoomBookingUrl();
   if (filters.fromDate && filters.toDate && filters.toDate < filters.fromDate) {
     if (status) {
       status.className = "staff-status is-error";
@@ -13581,26 +13810,35 @@ async function loadStaffRoomBookings({ silent = false } = {}) {
     }
     return false;
   }
-
   try {
     if (content) content.setAttribute("aria-busy", "true");
     if (!silent && status) {
       status.className = "staff-status";
-      status.textContent = `Loading ${getStaffRoomBookingSourceLabel().toLowerCase()}...`;
+      status.textContent = "Loading " + getStaffRoomBookingSourceLabel().toLowerCase() + "...";
     }
-    const result = await staffFetchJson(
-      `${STAFF_API_BASE}/room-booking/bookings?${buildStaffRoomBookingQueryString()}`
-    );
+    const result = await staffFetchJson(STAFF_API_BASE + "/room-booking/bookings?" + queryString);
+    if (requestId !== STAFF_STATE.roomBookingListRequestId) return false;
     applyStaffRoomBookingListResult(result);
     renderCurrentStaffRooms();
     updateStaffViewTabCounts();
+    const deepLinkBookingId = new URL(window.location.href).searchParams.get("roomBooking") || "";
+    const detailDialog = $("#staffRoomBookingDetailDialog");
+    if (deepLinkBookingId && (!detailDialog?.open || STAFF_STATE.selectedRoomBookingId !== deepLinkBookingId)) {
+      const trigger = document.querySelector('[data-staff-room-booking-detail="' + CSS.escape(deepLinkBookingId) + '"]');
+      void openStaffRoomBookingDetail(deepLinkBookingId, trigger);
+    } else if (!deepLinkBookingId && detailDialog?.open) {
+      closeStaffRoomBookingDetail();
+    }
     if (status) {
       status.className = "staff-status";
-      status.textContent = `${Number(result.total || 0)} ${getStaffRoomBookingSourceLabel().toLowerCase()} found. Source filtering and pagination are enforced by the server.`;
+      status.textContent = String(Number(result.total || 0)) + " " +
+        getStaffRoomBookingSourceLabel().toLowerCase() +
+        " found. Compact summaries are paginated by the server; details load only when opened.";
     }
     setStaffSectionLastUpdated("#staffRoomsLastUpdated", getStaffLastUpdatedLabel());
     return true;
   } catch (error) {
+    if (requestId !== STAFF_STATE.roomBookingListRequestId) return false;
     console.error("Staff room booking queue load failed:", error);
     if (!silent && status) {
       status.className = "staff-status is-error";
@@ -13608,7 +13846,9 @@ async function loadStaffRoomBookings({ silent = false } = {}) {
     }
     return false;
   } finally {
-    if (content) content.setAttribute("aria-busy", "false");
+    if (content && requestId === STAFF_STATE.roomBookingListRequestId) {
+      content.setAttribute("aria-busy", "false");
+    }
   }
 }
 async function loadStaffRooms({ silent = false } = {}) {
@@ -14693,6 +14933,7 @@ function bindStaffOrderActions() {
   const roomBookingsRefreshButton = $("#staffRefreshRoomBookingsBtn");
   const roomBookingsPreviousButton = $("#staffRoomsPreviousPageBtn");
   const roomBookingsNextButton = $("#staffRoomsNextPageBtn");
+  const roomBookingDetailDialog = $("#staffRoomBookingDetailDialog");
   let roomBookingSearchTimer = null;
   const roomBookingForm = $("#staffRoomBookingForm");
   const roomBookingAvailabilityButton = $("#staffRoomBookingAvailabilityBtn");
@@ -15476,6 +15717,14 @@ function bindStaffOrderActions() {
     void loadStaffRoomBookings();
   });
 
+  roomBookingDetailDialog?.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeStaffRoomBookingDetail();
+  });
+  roomBookingDetailDialog?.addEventListener("close", () => {
+    finishStaffRoomBookingDetailClose();
+  });
+
   if (roomsResetFiltersButton) {
     roomsResetFiltersButton.addEventListener("click", () => {
       if (roomsStatusInput) roomsStatusInput.value = "all";
@@ -15484,7 +15733,7 @@ function bindStaffOrderActions() {
       if (roomsSortInput) roomsSortInput.value = "created_desc";
       if (roomsFromDateInput) roomsFromDateInput.value = "";
       if (roomsToDateInput) roomsToDateInput.value = "";
-      if (roomsLimitInput) roomsLimitInput.value = "50";
+      if (roomsLimitInput) roomsLimitInput.value = "25";
       STAFF_STATE.roomBookingPage = 1;
       void loadStaffRoomBookings();
     });
@@ -15717,6 +15966,29 @@ function bindStaffOrderActions() {
     const roomBackHomeButton = target.closest("[data-staff-room-back-home]");
     if (roomBackHomeButton) {
       showStaffRoomOperationsView("home");
+      return;
+    }
+
+    const openBookingDetailButton = target.closest("[data-staff-room-booking-detail]");
+    if (openBookingDetailButton) {
+      void openStaffRoomBookingDetail(
+        openBookingDetailButton.dataset.staffRoomBookingDetail || "",
+        openBookingDetailButton
+      );
+      return;
+    }
+
+    if (target.closest("[data-staff-close-room-booking-detail]")) {
+      closeStaffRoomBookingDetail();
+      return;
+    }
+
+    const retryBookingDetailButton = target.closest("[data-staff-retry-room-booking-detail]");
+    if (retryBookingDetailButton) {
+      void openStaffRoomBookingDetail(
+        retryBookingDetailButton.dataset.staffRetryRoomBookingDetail || "",
+        STAFF_STATE.selectedRoomBookingTrigger
+      );
       return;
     }
 

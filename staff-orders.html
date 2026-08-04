@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -9243,6 +9243,206 @@ body.is-kds-display-mode .staff-kds-card:focus-within {
   }
 }
 
+
+/* Compact Room Booking summaries and progressive detail */
+.staff-room-booking-list { display: grid; gap: 0.7rem; }
+.staff-room-booking-summary-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(170px, 1.1fr) minmax(260px, 2fr) auto;
+  align-items: center;
+  gap: 0.8rem 1rem;
+  min-width: 0;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--room-line);
+  border-left: 4px solid #ad654b;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 7px 20px rgba(72, 47, 35, 0.06);
+}
+.staff-room-booking-summary-card[data-booking-source-group="manual"] { border-left-color: #6f5949; }
+.staff-room-booking-summary-card.has-fresh-data { background: linear-gradient(90deg, rgba(169, 72, 52, 0.09), #fff 20%); }
+.staff-room-booking-summary-card.is-selected {
+  border-color: #9b4c36;
+  box-shadow: 0 0 0 3px rgba(155, 76, 54, 0.14), 0 7px 20px rgba(72, 47, 35, 0.08);
+}
+.staff-room-booking-summary-primary,
+.staff-room-booking-summary-facts,
+.staff-room-booking-summary-actions { min-width: 0; }
+.staff-room-booking-summary-primary { display: grid; gap: 0.3rem; }
+.staff-room-booking-summary-reference { display: flex; align-items: center; flex-wrap: wrap; gap: 0.45rem; }
+.staff-room-booking-summary-reference strong { color: var(--room-ink); font-size: 1rem; }
+.staff-room-booking-summary-guest {
+  overflow: hidden;
+  color: var(--room-ink);
+  font-size: 0.9rem;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.staff-room-booking-summary-created { color: var(--room-muted); font-size: 0.74rem; }
+.staff-room-booking-summary-facts { display: grid; grid-template-columns: repeat(3, minmax(105px, 1fr)); gap: 0.55rem; }
+.staff-room-booking-summary-fact { display: grid; gap: 0.12rem; min-width: 0; }
+.staff-room-booking-summary-fact span {
+  color: var(--room-muted);
+  font-size: 0.66rem;
+  font-weight: 750;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.staff-room-booking-summary-fact strong {
+  overflow: hidden;
+  color: var(--room-ink);
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.staff-room-booking-summary-actions { display: grid; justify-items: end; gap: 0.5rem; }
+.staff-room-booking-action-required {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 0.3rem 0.55rem;
+  border-radius: 999px;
+  color: #7a301f;
+  background: #fff0e8;
+  font-size: 0.7rem;
+  font-weight: 850;
+  text-align: center;
+}
+.staff-room-booking-summary-actions .staff-btn { min-height: 40px; white-space: nowrap; }
+.staff-room-booking-summary-action-row { display: flex; align-items: center; justify-content: flex-end; gap: 0.45rem; }
+.staff-room-booking-more { position: relative; }
+.staff-room-booking-more > summary {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  cursor: pointer;
+  list-style: none;
+  place-items: center;
+  border: 1px solid var(--room-line);
+  border-radius: 11px;
+  color: var(--room-ink);
+  background: #fff;
+  font-size: 1.2rem;
+  font-weight: 850;
+}
+.staff-room-booking-more > summary::-webkit-details-marker { display: none; }
+.staff-room-booking-more > summary:focus-visible { outline: 3px solid rgba(155, 76, 54, 0.28); outline-offset: 2px; }
+.staff-room-booking-more-menu {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  display: grid;
+  min-width: 180px;
+  padding: 0.35rem;
+  border: 1px solid var(--room-line);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 12px 30px rgba(40, 26, 20, 0.16);
+}
+.staff-room-booking-more-menu button {
+  padding: 0.65rem 0.7rem;
+  border: 0;
+  border-radius: 8px;
+  color: var(--room-ink);
+  background: transparent;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 750;
+  text-align: left;
+}
+.staff-room-booking-more-menu button:hover,
+.staff-room-booking-more-menu button:focus-visible { background: #f7eee8; outline: none; }
+.staff-room-booking-detail-dialog {
+  width: min(760px, 100%);
+  max-width: none;
+  height: 100dvh;
+  max-height: none;
+  margin: 0 0 0 auto;
+  padding: 0;
+  border: 0;
+  background: #f8f5f1;
+  box-shadow: -24px 0 70px rgba(28, 21, 17, 0.26);
+}
+.staff-room-booking-detail-dialog::backdrop { background: rgba(25, 18, 15, 0.54); backdrop-filter: blur(3px); }
+.staff-room-booking-detail-shell { min-height: 100%; padding: clamp(1rem, 2.5vw, 1.5rem); }
+.staff-room-booking-detail-head {
+  position: sticky;
+  z-index: 3;
+  top: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--room-line);
+  background: #f8f5f1;
+}
+.staff-room-booking-detail-head h4 { margin: 0.12rem 0 0.25rem; color: var(--room-ink); font-size: clamp(1.25rem, 3vw, 1.65rem); }
+.staff-room-booking-detail-head p:last-child { max-width: 58ch; margin: 0; color: var(--room-muted); }
+.staff-room-booking-detail-content { display: grid; gap: 0.9rem; padding: 1rem 0 2rem; }
+.staff-room-booking-detail-section {
+  padding: 1rem;
+  border: 1px solid var(--room-line);
+  border-radius: 17px;
+  background: #fff;
+}
+.staff-room-booking-detail-section > h5 { margin: 0 0 0.75rem; color: var(--room-ink); font-size: 1rem; }
+.staff-room-booking-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.65rem; }
+.staff-room-booking-detail-field { display: grid; gap: 0.18rem; min-width: 0; padding: 0.7rem; border-radius: 12px; background: #faf7f3; }
+.staff-room-booking-detail-field span {
+  color: var(--room-muted);
+  font-size: 0.67rem;
+  font-weight: 750;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.staff-room-booking-detail-field strong { overflow-wrap: anywhere; color: var(--room-ink); font-size: 0.86rem; }
+.staff-room-booking-payment-list,
+.staff-room-booking-activity-list { display: grid; gap: 0.55rem; margin: 0; padding: 0; list-style: none; }
+.staff-room-booking-payment-list li,
+.staff-room-booking-activity-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.25rem 0.75rem;
+  padding: 0.7rem;
+  border-radius: 12px;
+  background: #faf7f3;
+}
+.staff-room-booking-payment-list small,
+.staff-room-booking-activity-list small { color: var(--room-muted); }
+.staff-room-booking-detail-actions-card { box-shadow: none; }
+.staff-room-booking-detail-actions-card .staff-order-actions { margin-top: 0.75rem; }
+.staff-room-booking-detail-skeleton {
+  min-height: 96px;
+  border-radius: 16px;
+  background: linear-gradient(100deg, #eee7df 20%, #faf7f3 40%, #eee7df 60%);
+  background-size: 220% 100%;
+  animation: staff-room-booking-skeleton 1.25s linear infinite;
+}
+@keyframes staff-room-booking-skeleton { to { background-position-x: -220%; } }
+@media (prefers-reduced-motion: reduce) { .staff-room-booking-detail-skeleton { animation: none; } }
+@media (max-width: 980px) {
+  .staff-room-booking-summary-card { grid-template-columns: minmax(160px, 0.8fr) minmax(0, 1.6fr); }
+  .staff-room-booking-summary-actions {
+    grid-column: 1 / -1;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+}
+@media (max-width: 640px) {
+  .staff-room-booking-summary-card { grid-template-columns: minmax(0, 1fr); padding: 0.85rem; }
+  .staff-room-booking-summary-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .staff-room-booking-summary-actions { grid-column: auto; }
+  .staff-room-booking-summary-action-row { width: 100%; }
+  .staff-room-booking-summary-action-row .staff-btn { flex: 1; }
+  .staff-room-booking-detail-dialog { width: 100%; height: 100dvh; margin: 0; }
+  .staff-room-booking-detail-grid { grid-template-columns: minmax(0, 1fr); }
+  .staff-room-booking-detail-head { align-items: stretch; flex-direction: column; }
+  .staff-room-booking-detail-head .staff-btn { width: 100%; }
+}
 </style>
   <link rel="stylesheet" href="css/staff-login-branding.css" />
   <link rel="stylesheet" href="css/room-checkout-receipt.css">
@@ -10521,13 +10721,13 @@ Streamline operations, delight customers, and grow your business with confidence
 
           <div class="staff-room-booking-queue-head"><div><p class="staff-kicker">Operational queue</p><h5 id="staffRoomBookingsHeading">Website Bookings</h5></div><button id="staffRefreshRoomBookingsBtn" class="staff-btn secondary" type="button">Refresh Queue</button></div>
           <div class="staff-room-booking-filters" aria-label="Room booking filters">
-            <label class="staff-field is-search"><span class="staff-label">Search guest</span><input id="staffRoomsSearchInput" class="staff-input" type="search" maxlength="80" placeholder="Name, phone, or email"></label>
+            <label class="staff-field is-search"><span class="staff-label">Search booking</span><input id="staffRoomsSearchInput" class="staff-input" type="search" maxlength="80" placeholder="Guest, phone, email, booking ID, or room"></label>
             <label class="staff-field"><span class="staff-label">Status</span><select id="staffRoomsStatusInput" class="staff-select"><option value="all" selected>All statuses</option><option value="pending">Pending</option><option value="confirmed">Confirmed</option><option value="checked_in">Checked in</option><option value="checked_out">Checked out</option><option value="cancelled">Cancelled</option><option value="no_show">No-show</option></select></label>
             <label class="staff-field" data-staff-manager-only hidden><span class="staff-label">Payment</span><select id="staffRoomsPaymentStatusInput" class="staff-select"><option value="all" selected>All payments</option><option value="unpaid">Unpaid</option><option value="partial">Partial</option><option value="paid">Paid</option><option value="refunded">Refunded</option></select></label>
             <label class="staff-field"><span class="staff-label">Check-in from</span><input id="staffRoomsFromDateInput" class="staff-input" type="date"></label>
             <label class="staff-field"><span class="staff-label">Check-in to</span><input id="staffRoomsToDateInput" class="staff-input" type="date"></label>
             <label class="staff-field"><span class="staff-label">Sort</span><select id="staffRoomsSortInput" class="staff-select"><option value="created_desc" selected>Newest first</option><option value="created_asc">Oldest first</option><option value="check_in_asc">Check-in soonest</option><option value="check_in_desc">Check-in latest</option><option value="action_required">Action required</option><option value="payment_status" data-staff-manager-only hidden>Payment status</option></select></label>
-            <label class="staff-field"><span class="staff-label">Per page</span><select id="staffRoomsLimitInput" class="staff-select"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select></label>
+            <label class="staff-field"><span class="staff-label">Per page</span><select id="staffRoomsLimitInput" class="staff-select"><option value="15">15</option><option value="25" selected>25</option><option value="30">30</option></select></label>
             <button id="staffResetRoomsFiltersBtn" class="staff-btn secondary" type="button">Reset Filters</button>
           </div>
           <p id="staffRoomBookingSourceStatus" class="staff-status" role="status" aria-live="polite">Open a source card to load hotel-scoped bookings.</p>
@@ -10901,6 +11101,20 @@ Streamline operations, delight customers, and grow your business with confidence
             <div id="staffRoomOperationsDrawerContent" class="staff-room-drawer-content" aria-live="polite"></div>
           </div>
         </dialog>
+
+        <dialog id="staffRoomBookingDetailDialog" class="staff-room-booking-detail-dialog" aria-labelledby="staffRoomBookingDetailTitle" aria-describedby="staffRoomBookingDetailDescription">
+          <div class="staff-room-booking-detail-shell">
+            <header class="staff-room-booking-detail-head">
+              <div>
+                <p id="staffRoomBookingDetailSource" class="staff-kicker">Booking detail</p>
+                <h4 id="staffRoomBookingDetailTitle" tabindex="-1">Booking</h4>
+                <p id="staffRoomBookingDetailDescription">Authorized booking information and management actions load only when opened.</p>
+              </div>
+              <button class="staff-btn secondary" type="button" data-staff-close-room-booking-detail aria-label="Close booking details">Close</button>
+            </header>
+            <div id="staffRoomBookingDetailContent" class="staff-room-booking-detail-content" aria-live="polite" aria-busy="false"></div>
+          </div>
+        </dialog>
       </section>
 
       <section id="staffReservationsPanel" class="staff-view-panel" data-staff-view-panel="reservations" aria-label="Staff reservations" hidden>
@@ -11057,7 +11271,6 @@ Streamline operations, delight customers, and grow your business with confidence
   <script src="js/food-order-bill-settings.js" defer></script>
 </body>
 </html>
-
 
 
 
