@@ -9251,7 +9251,7 @@ function buildStaffRoomBookingCard(booking = {}) {
     (actionRequired ? '<span class="staff-room-booking-action-required">' + escapeHTML(actionRequired) + '</span>' : '<span></span>') +
     '<div class="staff-room-booking-summary-action-row"><button class="staff-btn secondary" type="button" data-staff-room-booking-detail="' + escapeHTML(booking.id || "") +
     '" aria-label="Open booking ' + escapeHTML(booking.id || "") + ' details">View Details</button>' +
-    '<details class="staff-room-booking-more"><summary aria-label="More options for booking ' + escapeHTML(booking.id || "") + '">â‹®</summary>' +
+    '<details class="staff-room-booking-more"><summary aria-label="More options for booking ' + escapeHTML(booking.id || "") + '"><span>More</span><span aria-hidden="true">&#8942;</span></summary>' +
     '<div class="staff-room-booking-more-menu"><button type="button" data-staff-room-booking-detail="' + escapeHTML(booking.id || "") +
     '" data-staff-room-booking-detail-section="guest">Guest &amp; stay</button>' +
     (isStaffManagerSession() ? '<button type="button" data-staff-room-booking-detail="' + escapeHTML(booking.id || "") +

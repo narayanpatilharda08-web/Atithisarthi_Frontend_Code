@@ -9314,19 +9314,24 @@ body.is-kds-display-mode .staff-kds-card:focus-within {
 .staff-room-booking-summary-action-row { display: flex; align-items: center; justify-content: flex-end; gap: 0.45rem; }
 .staff-room-booking-more { position: relative; }
 .staff-room-booking-more > summary {
-  display: grid;
-  width: 42px;
+  display: flex;
+  width: auto;
+  min-width: 78px;
   height: 42px;
+  padding: 0 0.72rem;
   cursor: pointer;
   list-style: none;
-  place-items: center;
+  align-items: center;
+  justify-content: center;
+  gap: 0.32rem;
   border: 1px solid var(--room-line);
   border-radius: 11px;
   color: var(--room-ink);
   background: #fff;
-  font-size: 1.2rem;
+  font-size: 0.82rem;
   font-weight: 850;
 }
+.staff-room-booking-more > summary span:last-child { font-size: 1.1rem; line-height: 1; }
 .staff-room-booking-more > summary::-webkit-details-marker { display: none; }
 .staff-room-booking-more > summary:focus-visible { outline: 3px solid rgba(155, 76, 54, 0.28); outline-offset: 2px; }
 .staff-room-booking-more-menu {
@@ -11271,7 +11276,6 @@ Streamline operations, delight customers, and grow your business with confidence
   <script src="js/food-order-bill-settings.js" defer></script>
 </body>
 </html>
-
 
 
 
