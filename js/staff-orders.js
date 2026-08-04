@@ -1,4 +1,4 @@
-﻿"use strict";
+"use strict";
 
 function getDefaultStaffApiBaseUrl() {
   const hostname = window.location.hostname;
@@ -11561,16 +11561,33 @@ async function saveRestaurantTable(tableId = "") {
   }
 }
 
+async function copyRestaurantTableQrLink(url = "", promptTitle = "Copy this QR link") {
+  const link = String(url || "").trim();
+  if (!link) return false;
+
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(link);
+      return true;
+    } catch (error) {
+      console.warn("Table QR link clipboard copy failed; showing manual copy dialog:", error);
+    }
+  }
+
+  window.prompt(promptTitle, link);
+  return false;
+}
+
 async function generateRestaurantTableQr(tableId = "") {
   try {
     const result = await staffFetchJson(STAFF_API_BASE + "/tables/" + encodeURIComponent(tableId) + "/qr", {
       method: "POST"
     });
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(result.url);
+    const copied = await copyRestaurantTableQrLink(result.url, "Copy this canonical QR link");
+    if (copied) {
       setStaffTableMasterStatus("Canonical QR link copied for Table " + result.table.tableCode + ".", "success");
     } else {
-      window.prompt("Copy this canonical QR link", result.url);
+      setStaffTableMasterStatus("Canonical QR link ready for Table " + result.table.tableCode + ". Copy it from the dialog.", "success");
     }
   } catch (error) {
     setStaffTableMasterStatus(error.message || "QR link could not be generated.", "warning");
@@ -11578,35 +11595,6 @@ async function generateRestaurantTableQr(tableId = "") {
 }
 
 async function saveTableMasterEnforcement() {
-async function rotateRestaurantTableQr(tableId = "") {
-  if (!window.confirm("Rotate this table QR now? The currently printed QR will stop working and must be reprinted.")) return;
-  try {
-    const result = await staffFetchJson(STAFF_API_BASE + "/tables/" + encodeURIComponent(tableId) + "/qr/rotate", {
-      method: "POST"
-    });
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(result.url);
-      setStaffTableMasterStatus("New secure QR link copied. Reprint Table " + result.table.tableCode + " now.", "warning");
-    } else {
-      window.prompt("Copy and reprint this new secure QR link", result.url);
-    }
-  } catch (error) {
-    setStaffTableMasterStatus(error.message || "QR link could not be rotated.", "warning");
-  }
-}
-
-async function revokeRestaurantTableQr(tableId = "") {
-  if (!window.confirm("Revoke QR ordering for this table? The printed QR will stop working immediately.")) return;
-  try {
-    const result = await staffFetchJson(STAFF_API_BASE + "/tables/" + encodeURIComponent(tableId) + "/qr/revoke", {
-      method: "POST"
-    });
-    setStaffTableMasterStatus(result.message || "Table QR revoked.", "success");
-  } catch (error) {
-    setStaffTableMasterStatus(error.message || "QR link could not be revoked.", "warning");
-  }
-}
-
   const enabled = $("#staffTableMasterEnforcementInput")?.checked === true;
   try {
     const result = await staffFetchJson(STAFF_API_BASE + "/table-master/settings", {
@@ -11626,6 +11614,35 @@ async function revokeRestaurantTableQr(tableId = "") {
   }
 }
 
+async function rotateRestaurantTableQr(tableId = "") {
+  if (!window.confirm("Rotate this table QR now? The currently printed QR will stop working and must be reprinted.")) return;
+  try {
+    const result = await staffFetchJson(STAFF_API_BASE + "/tables/" + encodeURIComponent(tableId) + "/qr/rotate", {
+      method: "POST"
+    });
+    const copied = await copyRestaurantTableQrLink(result.url, "Copy and reprint this new secure QR link");
+    setStaffTableMasterStatus(
+      copied
+        ? "New secure QR link copied. Reprint Table " + result.table.tableCode + " now."
+        : "New secure QR link ready. Copy it from the dialog and reprint Table " + result.table.tableCode + " now.",
+      "warning"
+    );
+  } catch (error) {
+    setStaffTableMasterStatus(error.message || "QR link could not be rotated.", "warning");
+  }
+}
+
+async function revokeRestaurantTableQr(tableId = "") {
+  if (!window.confirm("Revoke QR ordering for this table? The printed QR will stop working immediately.")) return;
+  try {
+    const result = await staffFetchJson(STAFF_API_BASE + "/tables/" + encodeURIComponent(tableId) + "/qr/revoke", {
+      method: "POST"
+    });
+    setStaffTableMasterStatus(result.message || "Table QR revoked.", "success");
+  } catch (error) {
+    setStaffTableMasterStatus(error.message || "QR link could not be revoked.", "warning");
+  }
+}
 function setStaffTableOrderDetailNotice(message = "", tone = "success") {
   STAFF_STATE.tableOrderDetailNotice = String(message || "").trim();
   const status = $("#staffTakeOrderDetailStatus");
