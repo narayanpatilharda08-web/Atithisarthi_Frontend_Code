@@ -11590,6 +11590,17 @@ async function generateRestaurantTableQr(tableId = "") {
       setStaffTableMasterStatus("Canonical QR link ready for Table " + result.table.tableCode + ". Copy it from the dialog.", "success");
     }
   } catch (error) {
+    if (error?.code === "QR_TOKEN_ROTATION_REQUIRED") {
+      const rotateNow = window.confirm(
+        "This saved QR link cannot be copied after the server security key changed. Rotate it now? The old printed QR will stop working and must be reprinted."
+      );
+      if (rotateNow) {
+        await rotateRestaurantTableQr(tableId, { skipConfirmation: true });
+      } else {
+        setStaffTableMasterStatus(error.message, "warning");
+      }
+      return;
+    }
     setStaffTableMasterStatus(error.message || "QR link could not be generated.", "warning");
   }
 }
@@ -11614,8 +11625,11 @@ async function saveTableMasterEnforcement() {
   }
 }
 
-async function rotateRestaurantTableQr(tableId = "") {
-  if (!window.confirm("Rotate this table QR now? The currently printed QR will stop working and must be reprinted.")) return;
+async function rotateRestaurantTableQr(tableId = "", { skipConfirmation = false } = {}) {
+  if (
+    !skipConfirmation &&
+    !window.confirm("Rotate this table QR now? The currently printed QR will stop working and must be reprinted.")
+  ) return;
   try {
     const result = await staffFetchJson(STAFF_API_BASE + "/tables/" + encodeURIComponent(tableId) + "/qr/rotate", {
       method: "POST"
