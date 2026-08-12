@@ -383,6 +383,49 @@ let staffDashboardTrendChart = null;
 let staffOrdersRequestController = null;
 let staffSelectedTableOrderRequestController = null;
 let staffKdsRequestController = null;
+let staffRealtimeRefreshTimer = null;
+const staffRealtimePendingCards = new Set();
+const staffRealtimeReceivedEventIds = new Set();
+
+function getStaffRealtimeStreamUrl() {
+  return `${STAFF_API_BASE}/notifications/stream`;
+}
+
+function scheduleStaffRealtimeReconciliation(cardKey = "") {
+  if (cardKey) staffRealtimePendingCards.add(cardKey);
+  if (staffRealtimeRefreshTimer) return;
+  staffRealtimeRefreshTimer = window.setTimeout(async () => {
+    staffRealtimeRefreshTimer = null;
+    const pendingCards = new Set(staffRealtimePendingCards);
+    staffRealtimePendingCards.clear();
+    await loadStaffNotificationSummary({ silent: true });
+
+    if (pendingCards.has("website-orders") || pendingCards.has("qr-orders") || pendingCards.has("staff-orders")) {
+      if (STAFF_STATE.activeView === "dashboard" || STAFF_STATE.activeView === "orders") {
+        await loadStaffOrders({ silent: true });
+      }
+      if (shouldStaffSynchronizeKds()) await loadStaffKdsOrders({ silent: true });
+    }
+    if (pendingCards.has("website-room-bookings") && STAFF_STATE.activeView === "rooms") {
+      await loadStaffRooms({ silent: true });
+      await loadStaffRoomBookings({ silent: true });
+    }
+    if (pendingCards.has("testimonials") && STAFF_STATE.activeView === "testimonials") {
+      await loadStaffTestimonials({ silent: true });
+    }
+  }, 50);
+}
+
+function startStaffRealtimeUpdates() {
+  if (!window.StaffRealtime || !getStaffToken()) return false;
+  window.StaffRealtime.connect({ url: getStaffRealtimeStreamUrl(), getToken: getStaffToken });
+  setStaffLiveRefreshStatus("Connecting live updates", "muted");
+  return true;
+}
+
+function stopStaffRealtimeUpdates() {
+  window.StaffRealtime?.disconnect();
+}
 
 const DEFAULT_STAFF_TABLE_ORDERING_STATE = {
   staffOrderingEnabled: true,
@@ -1281,7 +1324,7 @@ function showStaffNotificationSummaryAlert(events = []) {
   return true;
 }
 
-function applyStaffNotificationSummary(result = {}) {
+function applyStaffNotificationSummary(result = {}, { suppressAlerts = false } = {}) {
   const resultHotelSlug = String(result.hotelSlug || "").trim().toLowerCase();
   const sessionHotelSlug = String(STAFF_STATE.staffUser?.hotelSlug || "").trim().toLowerCase();
   if (!resultHotelSlug || resultHotelSlug !== sessionHotelSlug) {
@@ -1346,7 +1389,7 @@ function applyStaffNotificationSummary(result = {}) {
     (event) => event.cardKey === "website-room-bookings" ||
       !recordRefreshViews.includes(getStaffNotificationCardDefinition(event.cardKey)?.view)
   );
-  if (wasInitialized && summaryOnlyEvents.length) {
+  if (!suppressAlerts && wasInitialized && summaryOnlyEvents.length) {
     playStaffAlertTone();
     staffAutoRefreshSoundPlayed = true;
     showStaffNotificationSummaryAlert(summaryOnlyEvents);
@@ -1355,10 +1398,10 @@ function applyStaffNotificationSummary(result = {}) {
   return true;
 }
 
-async function loadStaffNotificationSummary({ silent = true } = {}) {
+async function loadStaffNotificationSummary({ silent = true, suppressAlerts = false } = {}) {
   try {
     const result = await staffFetchJson(`${STAFF_API_BASE}/notifications/summary`);
-    return applyStaffNotificationSummary(result);
+    return applyStaffNotificationSummary(result, { suppressAlerts });
   } catch (error) {
     if (!silent) {
       console.warn("Staff notification summary load failed:", error);
@@ -1499,6 +1542,8 @@ function resetStaffDashboardState() {
     staffTableOrderSearchTimer = null;
   }
   resetStaffAutoRefreshFreshSummary();
+  staffRealtimeReceivedEventIds.clear();
+  staffRealtimePendingCards.clear();
   destroyStaffDashboardTrendChart();
   STAFF_STATE.staffUser = null;
   STAFF_STATE.featureConfig = normalizeStaffFeatureConfig();
@@ -13309,7 +13354,8 @@ function stopStaffAutoRefresh() {
 
 function startStaffAutoRefresh() {
   stopStaffAutoRefresh();
-  setStaffLiveRefreshStatus("Live updates on", "live");
+  if (startStaffRealtimeUpdates()) return;
+  setStaffLiveRefreshStatus("Fallback updates on", "live");
   setStaffKdsLiveStatus(
     shouldStaffSynchronizeKds() ? "Kitchen live" : "Kitchen waiting",
     shouldStaffSynchronizeKds() ? "live" : "muted"
@@ -13319,7 +13365,6 @@ function startStaffAutoRefresh() {
       ? STAFF_KDS_AUTO_REFRESH_INTERVAL_MS
       : STAFF_AUTO_REFRESH_INTERVAL_MS;
   staffAutoRefreshTimer = window.setInterval(() => {
-    if (document.hidden) return;
     void refreshStaffOperationalData({ silent: true });
   }, intervalMs);
 }
@@ -14724,6 +14769,7 @@ function bindStaffLogout() {
   if (!button) return;
 
   button.addEventListener("click", () => {
+    stopStaffRealtimeUpdates();
     clearStaffToken();
     const pinInput = $("#staffPinInput");
     if (pinInput) pinInput.value = "";
@@ -16307,19 +16353,58 @@ window.addEventListener("online", () => {
 });
 
 document.addEventListener("visibilitychange", () => {
-  if (!shouldStaffSynchronizeKds()) return;
+  if (!getStaffToken()) return;
+
   if (document.hidden) {
-    updateStaffKitchenDisplayFreshness(
-      `Background mode · last synchronized ${formatStaffRefreshTime()}`
-    );
+    if (shouldStaffSynchronizeKds()) {
+      updateStaffKitchenDisplayFreshness(
+        `Background sync active · last synchronized ${formatStaffRefreshTime()}`
+      );
+    }
     return;
   }
-  if (getStaffToken() && canStaffUseFeature("food")) {
-    void loadStaffKdsOrders({ silent: true }).catch(() => {});
-  }
+
+  // Reconcile immediately after browsers resume a background tab.
+  void refreshStaffOperationalData({ silent: true }).catch(() => {});
 });
 
-window.addEventListener("beforeunload", stopStaffAutoRefresh);
+window.addEventListener("staff:realtime-event", (event) => {
+  const liveEvent = event.detail || {};
+  const eventId = String(liveEvent.eventId || "").trim();
+  const cardKey = String(liveEvent.cardKey || "").trim();
+  if (!eventId || !cardKey || staffRealtimeReceivedEventIds.has(eventId)) return;
+  staffRealtimeReceivedEventIds.add(eventId);
+  if (staffRealtimeReceivedEventIds.size > 500) {
+    staffRealtimeReceivedEventIds.delete(staffRealtimeReceivedEventIds.values().next().value);
+  }
+  scheduleStaffRealtimeReconciliation(cardKey);
+});
+
+window.addEventListener("staff:realtime-state", (event) => {
+  const status = String(event.detail?.status || "");
+  if (!getStaffToken()) return;
+  if (status === "connected") {
+    if (staffAutoRefreshTimer) stopStaffAutoRefresh();
+    setStaffLiveRefreshStatus("Live updates connected", "live");
+    void (async () => {
+      await loadStaffNotificationSummary({ silent: true, suppressAlerts: true });
+      await refreshStaffOperationalData({ silent: true });
+    })();
+    return;
+  }
+  if (status === "disconnected") {
+    setStaffLiveRefreshStatus("Live connection retrying; fallback active", "warning");
+    if (!staffAutoRefreshTimer) {
+      const intervalMs = shouldStaffSynchronizeKds()
+        ? STAFF_KDS_AUTO_REFRESH_INTERVAL_MS
+        : STAFF_AUTO_REFRESH_INTERVAL_MS;
+      staffAutoRefreshTimer = window.setInterval(() => {
+        void refreshStaffOperationalData({ silent: true });
+      }, intervalMs);
+    }
+  }
+});
+window.addEventListener("beforeunload", () => { stopStaffRealtimeUpdates(); stopStaffAutoRefresh(); });
 window.addEventListener("resize", handleStaffViewportChange);
 document.addEventListener("DOMContentLoaded", initStaffOrdersPage);
 
