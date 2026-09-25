@@ -5014,6 +5014,7 @@ function initMenuAndCart() {
   };
   let pendingMenuGridFocusSelectors = [];
   let paymentGatewayScriptPromise = null;
+  let paymentGatewayIdempotencyKey = "";
   const MENU_ASSISTANT_STATE = {
     loading: false,
     open: false,
@@ -6778,7 +6779,11 @@ function initMenuAndCart() {
   }
 
   async function initPaymentGatewayDraft(initPayload) {
-    return postJSON("/api/payments/init", initPayload);
+    paymentGatewayIdempotencyKey ||= crypto.randomUUID?.() ||
+      `payment-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    return postJSON("/api/payments/init", initPayload, {
+      headers: { "Idempotency-Key": paymentGatewayIdempotencyKey }
+    });
   }
 
   function getGatewayLinkedOrderId(order) {
@@ -6822,7 +6827,8 @@ function initMenuAndCart() {
 
   async function reconcilePaymentGatewayOrder({
     order,
-    gatewayOrderId
+    gatewayOrderId,
+    paymentIntentId = ""
   }) {
     const orderId = getGatewayLinkedOrderId(order);
     const linkedGatewayOrderId = gatewayOrderId || "";
@@ -6833,6 +6839,7 @@ function initMenuAndCart() {
 
     try {
       return await postJSON("/api/payments/reconcile", {
+        paymentIntentId: paymentIntentId || undefined,
         hotelSlug: getActiveHotelSlug(),
         orderId,
         gatewayOrderId: linkedGatewayOrderId
@@ -6856,7 +6863,7 @@ function initMenuAndCart() {
     const payment = result.payment && typeof result.payment === "object" ? result.payment : {};
 
     return (
-      updateReason === "already_paid_by_other_request" &&
+      ["already_paid_by_other_request", "already_paid_same_payment", "captured_and_bound"].includes(updateReason) &&
       (payment.verified === true || payment.captured === true)
     );
   }
@@ -6916,7 +6923,8 @@ function initMenuAndCart() {
     customerAddress,
     note,
     summaryText,
-    orderContext
+    orderContext,
+    paymentIntentId = ""
   }) {
     return new Promise((resolve, reject) => {
       const gatewayOrderId = payment?.gatewayOrderId || "";
@@ -6977,7 +6985,8 @@ function initMenuAndCart() {
           ondismiss: async () => {
             const reconcileResult = await reconcilePaymentGatewayOrder({
               order,
-              gatewayOrderId
+              gatewayOrderId,
+              paymentIntentId
             });
 
             if (isPaidGatewayOrderResult(reconcileResult)) {
@@ -6999,6 +7008,7 @@ function initMenuAndCart() {
         handler: async (response) => {
           try {
             const verifyResult = await postJSON("/api/payments/verify", {
+              paymentIntentId: paymentIntentId || undefined,
               hotelSlug: getActiveHotelSlug(),
               orderId: getGatewayLinkedOrderId(order),
               gatewayOrderId: response.razorpay_order_id || gatewayOrderId,
@@ -7010,7 +7020,8 @@ function initMenuAndCart() {
           } catch (error) {
             const reconcileResult = await reconcilePaymentGatewayOrder({
               order,
-              gatewayOrderId
+              gatewayOrderId,
+              paymentIntentId
             });
 
             if (isPaidGatewayOrderResult(reconcileResult)) {
@@ -7091,7 +7102,8 @@ function initMenuAndCart() {
       customerAddress,
       note,
       summaryText,
-      orderContext
+      orderContext,
+      paymentIntentId: initResult.paymentIntentId || ""
     });
 
     if (!isPaidGatewayOrderResult(checkoutResult?.verifyResult)) {
@@ -7099,6 +7111,8 @@ function initMenuAndCart() {
         "Payment was verified, but the order could not be marked paid. Please contact the hotel."
       );
     }
+
+    paymentGatewayIdempotencyKey = "";
 
     CART = [];
     saveCart();
