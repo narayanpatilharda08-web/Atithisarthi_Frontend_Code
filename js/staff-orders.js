@@ -104,6 +104,8 @@ const STAFF_STATE = {
   staffUser: null,
   featureConfig: normalizeStaffFeatureConfig(),
   activeView: "dashboard",
+  paymentGateway: null,
+  paymentGatewayLoaded: false,
   orders: [],
   ordersRenderSignature: "",
   selectedOrderSourceCard: "",
@@ -264,6 +266,7 @@ const STAFF_MANAGER_VIEWS = [
   "contacts",
   "testimonials"
 ];
+const STAFF_OWNER_VIEWS = [...STAFF_MANAGER_VIEWS, "gateway"];
 const STAFF_BASIC_VIEWS = ["table-order", "orders", "kds", "support", "rooms"];
 const STAFF_ORDER_STATUS_LABELS = {
   new: "Received",
@@ -360,6 +363,12 @@ const STAFF_VIEW_META = {
     title: "Testimonials workspace",
     description:
       "Approve or pause hotel-specific guest reviews in a simple moderation flow."
+  },
+  gateway: {
+    badge: "Payment Gateway",
+    title: "Razorpay gateway",
+    description:
+      "Configure this property's own Razorpay TEST account, rotate credentials safely, and control explicit BYOG cutover."
   }
 };
 let staffAutoRefreshTimer = null;
@@ -418,7 +427,11 @@ function scheduleStaffRealtimeReconciliation(cardKey = "") {
 
 function startStaffRealtimeUpdates() {
   if (!window.StaffRealtime || !getStaffToken()) return false;
-  window.StaffRealtime.connect({ url: getStaffRealtimeStreamUrl(), getToken: getStaffToken });
+  window.StaffRealtime.connect({
+    url: getStaffRealtimeStreamUrl(),
+    getToken: getStaffToken,
+    refreshAccessToken: refreshStaffAccessToken
+  });
   setStaffLiveRefreshStatus("Connecting live updates", "muted");
   return true;
 }
@@ -462,6 +475,10 @@ function isStaffManagerSession(staffUser = STAFF_STATE.staffUser || {}) {
   return Boolean(staffUser?.isManager) || normalizeStaffRoleValue(staffUser?.role) === "owner";
 }
 
+function isStaffOwnerSession(staffUser = STAFF_STATE.staffUser || {}) {
+  return normalizeStaffRoleValue(staffUser?.role) === "owner";
+}
+
 function getStaffFeatureConfig(staffUser = STAFF_STATE.staffUser || {}) {
   return normalizeStaffFeatureConfig(staffUser?.features || STAFF_STATE.featureConfig || {});
 }
@@ -489,7 +506,11 @@ function getAllowedStaffViews(staffUser = STAFF_STATE.staffUser || {}) {
     return canStaffUseFeature("food", staffUser) ? ["kds"] : [];
   }
 
-  const roleViews = isStaffManagerSession(staffUser) ? STAFF_MANAGER_VIEWS : STAFF_BASIC_VIEWS;
+  const roleViews = isStaffOwnerSession(staffUser)
+    ? STAFF_OWNER_VIEWS
+    : isStaffManagerSession(staffUser)
+      ? STAFF_MANAGER_VIEWS
+      : STAFF_BASIC_VIEWS;
   const foodViews = new Set(["table-order", "orders", "kds", "support", "reservations"]);
   const roomViews = new Set(["rooms"]);
 
@@ -534,6 +555,26 @@ function setStaffToken(token) {
 
 function clearStaffToken() {
   localStorage.removeItem(STAFF_TOKEN_KEY);
+}
+
+let staffRefreshPromise = null;
+
+async function refreshStaffAccessToken() {
+  if (staffRefreshPromise) return staffRefreshPromise;
+  staffRefreshPromise = (async () => {
+    const response = await fetch(`${STAFF_API_BASE}/refresh`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "X-Auth-Intent": "session-refresh" }
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.token) return false;
+    setStaffToken(data.token);
+    return true;
+  })().catch(() => false).finally(() => {
+    staffRefreshPromise = null;
+  });
+  return staffRefreshPromise;
 }
 
 function getStaffScopedPreferenceKey(baseKey = "") {
@@ -1548,6 +1589,12 @@ function resetStaffDashboardState() {
   STAFF_STATE.staffUser = null;
   STAFF_STATE.featureConfig = normalizeStaffFeatureConfig();
   STAFF_STATE.activeView = "dashboard";
+  STAFF_STATE.paymentGateway = null;
+  STAFF_STATE.paymentGatewayLoaded = false;
+  clearStaffGatewaySecretInputs();
+  const gatewayKeyIdInput = $("#staffGatewayKeyIdInput");
+  if (gatewayKeyIdInput) gatewayKeyIdInput.value = "";
+  setStaffGatewayStatusMessage("");
   STAFF_STATE.orders = [];
   STAFF_STATE.ordersRenderSignature = "";
   STAFF_STATE.selectedOrderSourceCard = "";
@@ -2212,6 +2259,10 @@ function applyStaffRoleWorkspaceAccess(staffUser = STAFF_STATE.staffUser || {}) 
       return;
     }
     element.hidden = !isManager;
+  });
+
+  document.querySelectorAll("[data-staff-owner-only]").forEach((element) => {
+    element.hidden = !isStaffOwnerSession(staffUser);
   });
 
   if (sectionCount) {
@@ -12926,6 +12977,10 @@ function openStaffView(view = "dashboard") {
     void loadStaffOrderingSettings();
   }
 
+  if (nextView === "gateway" && !STAFF_STATE.paymentGatewayLoaded) {
+    void loadStaffPaymentGateway();
+  }
+
   if (nextView === "kds" && !STAFF_STATE.kdsOrdersLoaded) {
     void loadStaffKdsOrders();
   }
@@ -13128,7 +13183,7 @@ function setStaffFormDisabled(form, isDisabled) {
   }
 }
 
-async function staffFetchJson(url, options = {}) {
+async function staffFetchJson(url, options = {}, authAttempt = 0) {
   const headers = {
     ...(options.headers || {})
   };
@@ -13141,6 +13196,7 @@ async function staffFetchJson(url, options = {}) {
   const startedAt = performance.now();
   const response = await fetch(url, {
     ...options,
+    credentials: "include",
     headers
   });
   const durationMs = performance.now() - startedAt;
@@ -13177,6 +13233,9 @@ async function staffFetchJson(url, options = {}) {
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
+    if (response.status === 401 && authAttempt === 0 && token && await refreshStaffAccessToken()) {
+      return staffFetchJson(url, options, 1);
+    }
     const retryAfterSeconds = Number.parseInt(response.headers.get("Retry-After") || "", 10);
     const retryMessage =
       response.status === 429 && Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
@@ -13190,6 +13249,213 @@ async function staffFetchJson(url, options = {}) {
   }
 
   return data;
+}
+
+function setStaffGatewayStatusMessage(message = "", tone = "muted") {
+  const status = $("#staffGatewayOperationStatus");
+  if (!status) return;
+  status.hidden = !message;
+  status.className = `staff-table-order-status is-${tone}`;
+  status.textContent = message;
+}
+
+function clearStaffGatewaySecretInputs() {
+  ["#staffGatewayKeySecretInput", "#staffGatewayWebhookSecretInput"].forEach((selector) => {
+    const input = $(selector);
+    if (input) input.value = "";
+  });
+}
+
+function renderStaffPaymentGateway(gateway = {}) {
+  STAFF_STATE.paymentGateway = gateway;
+  const configured = gateway.configured === true;
+  const usingPropertyGateway = gateway.resolutionMode === "PER_PROPERTY";
+  const active = gateway.status === "ACTIVE";
+  const values = {
+    "#staffGatewayConfiguredValue": configured ? "Configured" : "Not configured",
+    "#staffGatewayRoutingValue": usingPropertyGateway ? "Per-property Razorpay" : "Legacy global gateway",
+    "#staffGatewayModeValue": gateway.mode || "TEST",
+    "#staffGatewayKeyValue": gateway.keyIdMasked || "Not saved",
+    "#staffGatewayMerchantValue": gateway.merchantRef || "Not assigned",
+    "#staffGatewayCredentialValue": gateway.credentialRef || "Not assigned",
+    "#staffGatewayWebhookValue": gateway.webhookPath || "Available after configuration",
+    "#staffGatewayFeatureValue": gateway.perHotelFeatureEnabled ? "Enabled on server" : "Not enabled on server"
+  };
+  Object.entries(values).forEach(([selector, value]) => {
+    const element = $(selector);
+    if (element) element.textContent = value;
+  });
+
+  const cutoverButton = $("#staffGatewayCutoverBtn");
+  if (cutoverButton) {
+    cutoverButton.hidden = !configured || usingPropertyGateway;
+    cutoverButton.disabled = !gateway.perHotelFeatureEnabled || !active;
+  }
+  const rollbackButton = $("#staffGatewayRollbackBtn");
+  if (rollbackButton) rollbackButton.hidden = !usingPropertyGateway;
+  const enabledButton = $("#staffGatewayEnabledBtn");
+  if (enabledButton) {
+    enabledButton.hidden = !usingPropertyGateway;
+    enabledButton.textContent = active ? "Disable Property Gateway" : "Enable Property Gateway";
+    enabledButton.dataset.nextEnabled = active ? "false" : "true";
+  }
+  const rolloutHint = $("#staffGatewayRolloutHint");
+  if (rolloutHint) {
+    rolloutHint.textContent = gateway.perHotelFeatureEnabled
+      ? "The server rollout flag is enabled. Cutover remains an explicit owner action."
+      : "Credentials can be staged, but cutover is locked until the Railway feature flag is enabled and deployed.";
+  }
+  const saveButton = $("#staffGatewaySaveBtn");
+  if (saveButton) saveButton.textContent = configured ? "Replace Credentials" : "Save TEST Credentials";
+}
+
+async function loadStaffPaymentGateway({ announce = false } = {}) {
+  if (!isStaffOwnerSession()) return false;
+  try {
+    if (announce) setStaffGatewayStatusMessage("Refreshing gateway status...", "muted");
+    const result = await staffFetchJson(`${STAFF_API_BASE}/payment-gateway`);
+    STAFF_STATE.paymentGatewayLoaded = true;
+    renderStaffPaymentGateway(result.gateway || {});
+    if (announce) setStaffGatewayStatusMessage("Gateway status refreshed.", "success");
+    return true;
+  } catch (error) {
+    setStaffGatewayStatusMessage(error.message || "Unable to load gateway status.", "error");
+    return false;
+  }
+}
+
+function getStaffGatewayCredentialPayload({ includeWebhook = false } = {}) {
+  const payload = {
+    provider: "razorpay",
+    mode: "TEST",
+    keyId: $("#staffGatewayKeyIdInput")?.value.trim() || "",
+    keySecret: $("#staffGatewayKeySecretInput")?.value || ""
+  };
+  if (includeWebhook) {
+    payload.webhookSecret = $("#staffGatewayWebhookSecretInput")?.value || "";
+  }
+  return payload;
+}
+
+async function testStaffGatewayConnection() {
+  const form = $("#staffGatewayCredentialsForm");
+  const button = $("#staffGatewayTestBtn");
+  const payload = getStaffGatewayCredentialPayload();
+  try {
+    setStaffFormDisabled(form, true);
+    if (button) button.textContent = "Testing...";
+    setStaffGatewayStatusMessage("Checking Razorpay TEST authentication...", "muted");
+    await staffFetchJson(`${STAFF_API_BASE}/payment-gateway/test-connection`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    setStaffGatewayStatusMessage("TEST credentials authenticated successfully. No payment was created.", "success");
+  } catch (error) {
+    setStaffGatewayStatusMessage(error.message || "TEST credential check failed.", "error");
+  } finally {
+    payload.keySecret = "";
+    clearStaffGatewaySecretInputs();
+    setStaffFormDisabled(form, false);
+    if (button) button.textContent = "Test Connection";
+  }
+}
+
+async function saveStaffGatewayCredentials(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = $("#staffGatewaySaveBtn");
+  const payload = getStaffGatewayCredentialPayload({ includeWebhook: true });
+  const replacing = STAFF_STATE.paymentGateway?.configured === true;
+  if (replacing && !window.confirm(
+    "Replace the active TEST credential version? Existing PaymentIntents will remain bound to the historical version."
+  )) {
+    clearStaffGatewaySecretInputs();
+    return;
+  }
+  try {
+    setStaffFormDisabled(form, true);
+    if (button) button.textContent = replacing ? "Replacing..." : "Saving...";
+    setStaffGatewayStatusMessage("Validating and storing write-only TEST credentials...", "muted");
+    const result = await staffFetchJson(`${STAFF_API_BASE}/payment-gateway`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    STAFF_STATE.paymentGatewayLoaded = true;
+    renderStaffPaymentGateway(result.gateway || {});
+    const keyId = $("#staffGatewayKeyIdInput");
+    if (keyId) keyId.value = "";
+    setStaffGatewayStatusMessage(
+      replacing
+        ? "Credential rotation completed. Existing payments keep their original credential binding."
+        : "TEST credentials saved. Payment routing was not changed.",
+      "success"
+    );
+  } catch (error) {
+    setStaffGatewayStatusMessage(error.message || "Unable to save gateway credentials.", "error");
+  } finally {
+    payload.keySecret = "";
+    payload.webhookSecret = "";
+    clearStaffGatewaySecretInputs();
+    setStaffFormDisabled(form, false);
+    if (button) button.textContent = replacing ? "Replace Credentials" : "Save TEST Credentials";
+  }
+}
+
+async function changeStaffGatewayResolution(resolutionMode) {
+  const label = resolutionMode === "PER_PROPERTY" ? "cut over" : "roll back";
+  if (!window.confirm(`Confirm ${label} for new payments at this property? Existing payments keep their original merchant and credential binding.`)) return;
+  try {
+    setStaffGatewayStatusMessage(`Applying explicit ${label}...`, "muted");
+    const result = await staffFetchJson(`${STAFF_API_BASE}/payment-gateway/resolution`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ resolutionMode })
+    });
+    renderStaffPaymentGateway(result.gateway || {});
+    setStaffGatewayStatusMessage(
+      resolutionMode === "PER_PROPERTY"
+        ? "New PaymentIntents will now use this property's bound Razorpay account."
+        : "New payments now use the explicitly selected legacy-global route.",
+      "success"
+    );
+  } catch (error) {
+    setStaffGatewayStatusMessage(error.message || `Unable to ${label} gateway routing.`, "error");
+  }
+}
+
+async function changeStaffGatewayEnabled() {
+  const button = $("#staffGatewayEnabledBtn");
+  const enabled = button?.dataset.nextEnabled === "true";
+  try {
+    setStaffGatewayStatusMessage(enabled ? "Enabling property gateway..." : "Disabling property gateway...", "muted");
+    const result = await staffFetchJson(`${STAFF_API_BASE}/payment-gateway/enabled`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled })
+    });
+    renderStaffPaymentGateway(result.gateway || {});
+    setStaffGatewayStatusMessage(
+      enabled ? "Property gateway enabled." : "Property gateway disabled. New payments will fail closed until re-enabled or explicitly rolled back.",
+      enabled ? "success" : "warning"
+    );
+  } catch (error) {
+    setStaffGatewayStatusMessage(error.message || "Unable to change gateway status.", "error");
+  }
+}
+
+function bindStaffPaymentGatewayControls() {
+  const form = $("#staffGatewayCredentialsForm");
+  if (form && form.dataset.boundSubmit !== "true") {
+    form.addEventListener("submit", saveStaffGatewayCredentials);
+    form.dataset.boundSubmit = "true";
+  }
+  $("#staffGatewayTestBtn")?.addEventListener("click", () => void testStaffGatewayConnection());
+  $("#staffGatewayRefreshBtn")?.addEventListener("click", () => void loadStaffPaymentGateway({ announce: true }));
+  $("#staffGatewayCutoverBtn")?.addEventListener("click", () => void changeStaffGatewayResolution("PER_PROPERTY"));
+  $("#staffGatewayRollbackBtn")?.addEventListener("click", () => void changeStaffGatewayResolution("LEGACY_GLOBAL"));
+  $("#staffGatewayEnabledBtn")?.addEventListener("click", () => void changeStaffGatewayEnabled());
 }
 
 async function fetchStaffOrderingSettings() {
@@ -14637,6 +14903,7 @@ async function handleStaffTestimonialApprovalAction(button) {
 async function loginStaff(hotelSlug, pin) {
   const response = await fetch(`${STAFF_API_BASE}/login`, {
     method: "POST",
+    credentials: "include",
     headers: {
       "Content-Type": "application/json"
     },
@@ -14768,12 +15035,23 @@ function bindStaffLogout() {
   const button = $("#staffLogoutBtn");
   if (!button) return;
 
-  button.addEventListener("click", () => {
+  button.addEventListener("click", async () => {
     stopStaffRealtimeUpdates();
-    clearStaffToken();
-    const pinInput = $("#staffPinInput");
-    if (pinInput) pinInput.value = "";
-    showStaffLoginView("Logged out.");
+    try {
+      if (getStaffToken()) {
+        await staffFetchJson(`${STAFF_API_BASE}/logout`, {
+          method: "POST",
+          headers: { "X-Auth-Intent": "session-logout" }
+        });
+      }
+    } catch (error) {
+      console.warn("Staff logout revocation failed:", error);
+    } finally {
+      clearStaffToken();
+      const pinInput = $("#staffPinInput");
+      if (pinInput) pinInput.value = "";
+      showStaffLoginView("Logged out.");
+    }
   });
 }
 
@@ -16327,6 +16605,7 @@ async function initStaffOrdersPage() {
   bindStaffSoundAlertToggle();
   bindStaffSoundVolumeControl();
   bindStaffBrowserAlertToggle();
+  bindStaffPaymentGatewayControls();
   bindStaffOrderActions();
   syncStaffSidebarForViewport();
   await checkExistingStaffSession();

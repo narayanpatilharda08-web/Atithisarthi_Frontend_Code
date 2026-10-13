@@ -277,12 +277,24 @@
     });
   }
 
-  async function request(path, options = {}) {
+  async function request(path, options = {}, authAttempt = 0) {
     const token = localStorage.getItem(TOKEN_KEY) || "";
     if (!token) throw new Error("Admin session is required");
     const headers = { Accept: "application/json", ...(options.headers || {}), Authorization: `Bearer ${token}` };
-    const response = await fetch(`${getApiBase()}/admin/login-branding${path}`, { ...options, headers });
+    const response = await fetch(`${getApiBase()}/admin/login-branding${path}`, {
+      ...options,
+      credentials: "include",
+      headers
+    });
     const payload = await response.json().catch(() => ({}));
+    if (
+      response.status === 401 &&
+      authAttempt === 0 &&
+      typeof window.refreshAdminAccessToken === "function" &&
+      await window.refreshAdminAccessToken()
+    ) {
+      return request(path, options, 1);
+    }
     if (!response.ok) throw new Error(payload.message || "Login branding request failed");
     return payload;
   }

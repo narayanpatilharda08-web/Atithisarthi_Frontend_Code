@@ -4,6 +4,7 @@
   const state = {
     url: "",
     getToken: null,
+    refreshAccessToken: null,
     controller: null,
     reconnectTimer: null,
     attempt: 0,
@@ -60,8 +61,9 @@
     emit("state", { status: "connecting" });
 
     try {
-      const response = await fetch(state.url, {
+      let response = await fetch(state.url, {
         method: "GET",
+        credentials: "include",
         headers: {
           Accept: "text/event-stream",
           Authorization: `Bearer ${token}`
@@ -69,6 +71,22 @@
         cache: "no-store",
         signal: controller.signal
       });
+      if (response.status === 401 && typeof state.refreshAccessToken === "function") {
+        const refreshed = await state.refreshAccessToken();
+        const refreshedToken = typeof state.getToken === "function" ? state.getToken() : "";
+        if (refreshed && refreshedToken && !controller.signal.aborted) {
+          response = await fetch(state.url, {
+            method: "GET",
+            credentials: "include",
+            headers: {
+              Accept: "text/event-stream",
+              Authorization: `Bearer ${refreshedToken}`
+            },
+            cache: "no-store",
+            signal: controller.signal
+          });
+        }
+      }
       if (!response.ok || !response.body) {
         throw new Error(`Live update connection failed (${response.status})`);
       }
@@ -102,13 +120,14 @@
     }
   }
 
-  function connect({ url = "", getToken } = {}) {
+  function connect({ url = "", getToken, refreshAccessToken } = {}) {
     const nextUrl = String(url || "").trim();
     if (!nextUrl || typeof getToken !== "function") return;
     if (!state.stopped && state.url === nextUrl && state.getToken === getToken) return;
     disconnect();
     state.url = nextUrl;
     state.getToken = getToken;
+    state.refreshAccessToken = typeof refreshAccessToken === "function" ? refreshAccessToken : null;
     state.stopped = false;
     void open();
   }

@@ -10437,6 +10437,44 @@ body.is-kds-display-mode .staff-kds-card:focus-within {
   .staff-room-booking-detail-head { align-items: stretch; flex-direction: column; }
   .staff-room-booking-detail-head .staff-btn { width: 100%; }
 }
+
+.staff-gateway-panel { display: grid; gap: 18px; }
+.staff-gateway-panel[hidden] { display: none; }
+.staff-gateway-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.staff-gateway-status-grid article,
+.staff-gateway-form,
+.staff-gateway-rollout,
+.staff-gateway-notice {
+  border: 1px solid rgba(80, 55, 44, 0.12);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.88);
+}
+.staff-gateway-status-grid article {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  min-width: 0;
+}
+.staff-gateway-status-grid article.is-wide { grid-column: 1 / -1; }
+.staff-gateway-status-grid span {
+  color: var(--staff-muted, #765f55);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.staff-gateway-status-grid strong { overflow-wrap: anywhere; }
+.staff-gateway-form,
+.staff-gateway-rollout,
+.staff-gateway-notice { padding: 18px; }
+@media (max-width: 720px) {
+  .staff-gateway-status-grid { grid-template-columns: 1fr; }
+  .staff-gateway-status-grid article.is-wide { grid-column: auto; }
+}
 </style>
   <link rel="stylesheet" href="css/staff-login-branding.css" />
   <link rel="stylesheet" href="css/room-checkout-receipt.css">
@@ -10726,6 +10764,10 @@ Streamline operations, delight customers, and grow your business with confidence
               <span class="staff-sidebar-nav-label">Testimonials</span>
               <span id="staffTestimonialsTabCount" class="staff-view-tab-count">0</span>
             </button>
+            <button class="staff-view-tab" type="button" data-staff-view="gateway" data-staff-owner-only aria-selected="false" hidden>
+              <span class="staff-sidebar-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16v12H4zM4 10h16M8 15h4M17 15h.01" /></svg></span>
+              <span class="staff-sidebar-nav-label">Payment Gateway</span>
+            </button>
           </div>
 
           <div class="staff-sidebar-note">
@@ -10944,6 +10986,67 @@ Streamline operations, delight customers, and grow your business with confidence
         <div id="staffReportsContent" class="staff-empty staff-section-stage">
           Open this view to load hotel-scoped business reports.
         </div>
+      </section>
+
+      <section id="staffGatewayPanel" class="staff-view-panel staff-gateway-panel" data-staff-view-panel="gateway" data-staff-owner-only aria-label="Property payment gateway" hidden>
+        <div class="staff-section-head">
+          <div>
+            <p class="staff-kicker">Owner-only settings</p>
+            <h3>Razorpay Payment Gateway</h3>
+            <p class="staff-section-copy">Stage this property's own Razorpay TEST account. Credentials are write-only and are never shown again after submission.</p>
+          </div>
+          <button id="staffGatewayRefreshBtn" class="staff-btn secondary" type="button">Refresh Status</button>
+        </div>
+
+        <div class="staff-gateway-status-grid" aria-label="Gateway status">
+          <article><span>Configuration</span><strong id="staffGatewayConfiguredValue">Checking...</strong></article>
+          <article><span>New-payment routing</span><strong id="staffGatewayRoutingValue">Checking...</strong></article>
+          <article><span>Mode</span><strong id="staffGatewayModeValue">TEST</strong></article>
+          <article><span>Public key</span><strong id="staffGatewayKeyValue">Not saved</strong></article>
+          <article><span>Merchant binding</span><strong id="staffGatewayMerchantValue">Not assigned</strong></article>
+          <article><span>Credential version</span><strong id="staffGatewayCredentialValue">Not assigned</strong></article>
+          <article class="is-wide"><span>Webhook path</span><strong id="staffGatewayWebhookValue">Available after configuration</strong></article>
+          <article class="is-wide"><span>Rollout flag</span><strong id="staffGatewayFeatureValue">Checking...</strong></article>
+        </div>
+
+        <p id="staffGatewayRolloutHint" class="staff-gateway-notice">Credentials may be staged without changing payment routing.</p>
+
+        <form id="staffGatewayCredentialsForm" class="staff-form staff-gateway-form" autocomplete="off">
+          <div>
+            <p class="staff-kicker">Razorpay Test Mode</p>
+            <h4>Write-only credentials</h4>
+            <p>Use the TEST key ID, full TEST key secret, and a dedicated webhook secret. Never paste these secrets into chat.</p>
+          </div>
+          <label class="staff-field">
+            <span class="staff-label">TEST key ID</span>
+            <input id="staffGatewayKeyIdInput" class="staff-input" type="text" inputmode="text" autocomplete="off" spellcheck="false" placeholder="rzp_test_..." required minlength="10" maxlength="160" />
+          </label>
+          <label class="staff-field">
+            <span class="staff-label">TEST key secret</span>
+            <input id="staffGatewayKeySecretInput" class="staff-input" type="password" autocomplete="new-password" spellcheck="false" required minlength="8" maxlength="500" />
+          </label>
+          <label class="staff-field">
+            <span class="staff-label">Webhook secret</span>
+            <input id="staffGatewayWebhookSecretInput" class="staff-input" type="password" autocomplete="new-password" spellcheck="false" required minlength="8" maxlength="500" />
+          </label>
+          <p class="staff-hint">Secrets are cleared from this form after every attempt. Saved secrets cannot be retrieved or prefilled.</p>
+          <div class="staff-actions">
+            <button id="staffGatewayTestBtn" class="staff-btn secondary" type="button">Test Connection</button>
+            <button id="staffGatewaySaveBtn" class="staff-btn" type="submit">Save TEST Credentials</button>
+          </div>
+        </form>
+
+        <section class="staff-section-stage staff-gateway-rollout" aria-labelledby="staffGatewayRolloutHeading">
+          <p class="staff-kicker">Explicit routing control</p>
+          <h4 id="staffGatewayRolloutHeading">Pilot cutover and rollback</h4>
+          <p>Cutover affects only new PaymentIntents. Existing payments retain their original merchant and credential version.</p>
+          <div class="staff-actions">
+            <button id="staffGatewayCutoverBtn" class="staff-btn" type="button" hidden>Use Property Gateway for New Payments</button>
+            <button id="staffGatewayRollbackBtn" class="staff-btn secondary" type="button" hidden>Roll Back New Payments to Legacy Global</button>
+            <button id="staffGatewayEnabledBtn" class="staff-btn secondary" type="button" hidden>Disable Property Gateway</button>
+          </div>
+        </section>
+        <p id="staffGatewayOperationStatus" class="staff-table-order-status" role="status" aria-live="polite" hidden></p>
       </section>
 
       <section id="staffTableOrderPanel" class="staff-view-panel" data-staff-view-panel="table-order" aria-label="Staff table order" hidden>

@@ -68,6 +68,7 @@ if (uploadBtn) {
 
 const ADMIN_TOKEN_KEY = "hotel_platform_admin_token";
 let adminTabLoadController = null;
+let adminRefreshPromise = null;
 
 function getAdminToken() {
   return localStorage.getItem(ADMIN_TOKEN_KEY) || "";
@@ -1042,7 +1043,25 @@ function filterMenuItemsBySearchQuery(menuItems = [], searchQuery = "") {
   });
 }
 
-async function fetchJson(url, options = {}) {
+async function refreshAdminAccessToken() {
+  if (adminRefreshPromise) return adminRefreshPromise;
+  adminRefreshPromise = (async () => {
+    const response = await fetch(`${AUTH_API_BASE}/refresh`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "X-Auth-Intent": "session-refresh" }
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.token) return false;
+    setAdminToken(data.token);
+    return true;
+  })().catch(() => false).finally(() => {
+    adminRefreshPromise = null;
+  });
+  return adminRefreshPromise;
+}
+
+async function fetchJson(url, options = {}, authAttempt = 0) {
   const headers = {
     ...(options.headers || {})
   };
@@ -1054,6 +1073,7 @@ async function fetchJson(url, options = {}) {
 
   const response = await fetch(url, {
     ...options,
+    credentials: "include",
     headers
   });
 
@@ -1061,6 +1081,9 @@ async function fetchJson(url, options = {}) {
 
   if (!response.ok) {
     if (response.status === 401) {
+      if (authAttempt === 0 && token && await refreshAdminAccessToken()) {
+        return fetchJson(url, options, 1);
+      }
       clearAdminToken();
       showLoginView();
       throw new Error("Admin session expired or missing. Please log in again.");
@@ -9353,6 +9376,7 @@ function fillProfileForm(profile) {
 async function loginAdmin(email, password) {
  const response = await fetch(`${AUTH_API_BASE}/login`, {
     method: "POST",
+    credentials: "include",
     headers: {
       "Content-Type": "application/json"
     },
@@ -9427,9 +9451,20 @@ function bindAdminLogout() {
   const btn = document.getElementById("adminLogoutBtn");
   if (!btn) return;
 
-  btn.addEventListener("click", () => {
-    clearAdminToken();
-    showLoginView();
+  btn.addEventListener("click", async () => {
+    try {
+      if (getAdminToken()) {
+        await fetchJson(`${AUTH_API_BASE}/logout`, {
+          method: "POST",
+          headers: { "X-Auth-Intent": "session-logout" }
+        });
+      }
+    } catch (error) {
+      console.warn("Admin logout revocation failed:", error);
+    } finally {
+      clearAdminToken();
+      showLoginView();
+    }
   });
 }
 
@@ -9455,36 +9490,16 @@ async function checkExistingAdminSession() {
 }
 
 async function uploadImageFile({ hotelSlug, folder, file }) {
-  const token = getAdminToken();
   const formData = new FormData();
 
   formData.append("hotelSlug", hotelSlug || "shared");
   formData.append("folder", folder || "misc");
   formData.append("file", file);
 
-const response = await fetch(UPLOAD_API_BASE, {
+  return fetchJson(UPLOAD_API_BASE, {
     method: "POST",
-    headers: token
-      ? {
-          Authorization: `Bearer ${token}`
-        }
-      : {},
     body: formData
   });
-
-  const data = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    if (response.status === 401) {
-      clearAdminToken();
-      showLoginView();
-      throw new Error("Admin session expired or missing. Please log in again.");
-    }
-
-    throw new Error(data.message || "Upload failed");
-  }
-
-  return data;
 }
 
 function bindUploadForm() {
