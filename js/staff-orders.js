@@ -13279,7 +13279,10 @@ function renderStaffPaymentGateway(gateway = {}) {
     "#staffGatewayMerchantValue": gateway.merchantRef || "Not assigned",
     "#staffGatewayCredentialValue": gateway.credentialRef || "Not assigned",
     "#staffGatewayWebhookValue": gateway.webhookPath || "Available after configuration",
-    "#staffGatewayFeatureValue": gateway.perHotelFeatureEnabled ? "Enabled on server" : "Not enabled on server"
+    "#staffGatewayFeatureValue": gateway.perHotelFeatureEnabled ? "Enabled on server" : "Not enabled on server",
+    "#staffGatewayPolicyDefaultValue": gateway.explicitPolicyRequired
+      ? "Fail closed until explicitly configured"
+      : "Legacy compatibility allowed"
   };
   Object.entries(values).forEach(([selector, value]) => {
     const element = $(selector);
@@ -13301,8 +13304,10 @@ function renderStaffPaymentGateway(gateway = {}) {
   }
   const rolloutHint = $("#staffGatewayRolloutHint");
   if (rolloutHint) {
-    rolloutHint.textContent = gateway.perHotelFeatureEnabled
-      ? "The server rollout flag is enabled. Cutover remains an explicit owner action."
+    rolloutHint.textContent = gateway.perHotelFeatureEnabled && gateway.explicitPolicyRequired
+      ? "The server rollout flag and strict policy mode are enabled. Unconfigured properties cannot use the legacy merchant."
+      : gateway.perHotelFeatureEnabled
+        ? "The server rollout flag is enabled. Cutover remains an explicit owner action."
       : "Credentials can be staged, but cutover is locked until the Railway feature flag is enabled and deployed.";
   }
   const saveButton = $("#staffGatewaySaveBtn");
