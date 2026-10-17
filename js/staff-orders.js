@@ -136,6 +136,7 @@ const STAFF_STATE = {
   tableOrderTarget: null,
   tableOrderIdempotencyKey: "",
   roomServiceCart: {},
+  roomServiceIdempotencyKey: "",
   tableOrdering: null,
   tableOrderMenuLoaded: false,
   tableOrderMenuQuery: "",
@@ -1618,6 +1619,7 @@ function resetStaffDashboardState() {
   STAFF_STATE.tableOrderTarget = null;
   STAFF_STATE.tableOrderIdempotencyKey = "";
   STAFF_STATE.roomServiceCart = {};
+  STAFF_STATE.roomServiceIdempotencyKey = "";
   STAFF_STATE.tableOrdering = null;
   STAFF_STATE.tableOrderMenuLoaded = false;
   STAFF_STATE.tableOrderMenuQuery = "";
@@ -10177,6 +10179,7 @@ function clearStaffRoomServiceForm({ keepStatus = false } = {}) {
   const form = $("#staffRoomServiceOrderForm");
   form?.reset();
   STAFF_STATE.roomServiceCart = {};
+  STAFF_STATE.roomServiceIdempotencyKey = "";
   renderStaffRoomServiceBookingOptions();
   renderStaffRoomServiceMenuOptions();
   renderStaffRoomServiceCart();
@@ -11392,6 +11395,11 @@ function createStaffOrderAdditionIdempotencyKey() {
   return `staff-add-${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
 }
 
+function createStaffOrderCreationIdempotencyKey(scope = "staff-order") {
+  if (window.crypto?.randomUUID) return `${scope}-${window.crypto.randomUUID()}`;
+  return `${scope}-${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+}
+
 function syncStaffTableOrderMode() {
   const isAddition = STAFF_STATE.tableOrderMode === "add" && STAFF_STATE.tableOrderTarget;
   const target = STAFF_STATE.tableOrderTarget || {};
@@ -12570,14 +12578,19 @@ async function handleStaffRoomServiceOrderSubmit(event) {
 
   setStaffActionBusyState(submitButton, true);
   setStaffRoomServiceStatus("Creating room service order...", false);
+  const idempotencyKey = STAFF_STATE.roomServiceIdempotencyKey ||
+    createStaffOrderCreationIdempotencyKey("staff-room-service");
+  STAFF_STATE.roomServiceIdempotencyKey = idempotencyKey;
 
   try {
     await staffFetchJson(`${STAFF_API_BASE}/room-service-orders`, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "Idempotency-Key": idempotencyKey
       },
       body: JSON.stringify({
+        clientRequestId: idempotencyKey,
         roomBookingId,
         paymentMethod,
         chargeToRoom,
@@ -12726,12 +12739,17 @@ async function handleStaffTableOrderSubmit(event) {
     }
 
     setStaffTableOrderStatus("Placing order...", "muted");
+    const idempotencyKey = STAFF_STATE.tableOrderIdempotencyKey ||
+      createStaffOrderCreationIdempotencyKey("staff-table-order");
+    STAFF_STATE.tableOrderIdempotencyKey = idempotencyKey;
     const createResult = await staffFetchJson(`${STAFF_API_BASE}/orders`, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "Idempotency-Key": idempotencyKey
       },
       body: JSON.stringify({
+        clientRequestId: idempotencyKey,
         tableNumber,
         ...(STAFF_STATE.selectedRestaurantTableId
           ? { restaurantTableId: STAFF_STATE.selectedRestaurantTableId }
@@ -12741,7 +12759,8 @@ async function handleStaffTableOrderSubmit(event) {
         note,
         items: entries.map((item) => ({
           id: item.id,
-          qty: item.qty
+          qty: item.qty,
+          ...(item.note ? { note: item.note } : {})
         }))
       })
     });

@@ -3378,6 +3378,43 @@ async function postJSON(url, payload, { headers = {}, credentials = "same-origin
 }
 
 const SECURE_QR_PENDING_REQUEST_KEY = "secure_qr_pending_order_v1";
+const TASK6_ORDER_PENDING_REQUEST_KEY = "task6_pending_order_request_v1";
+
+function createTask6OrderClientRequestId(scope = "order") {
+  const suffix = window.crypto?.randomUUID?.() ||
+    `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+  return `${scope}-${suffix}`;
+}
+
+function getTask6OrderClientRequestId(scope, requestPayload) {
+  const requestSignature = JSON.stringify({ scope, requestPayload });
+  try {
+    const pending = JSON.parse(window.sessionStorage.getItem(TASK6_ORDER_PENDING_REQUEST_KEY) || "null");
+    if (pending?.requestSignature === requestSignature && pending?.clientRequestId) {
+      return pending.clientRequestId;
+    }
+  } catch {}
+
+  const clientRequestId = createTask6OrderClientRequestId(scope);
+  try {
+    window.sessionStorage.setItem(TASK6_ORDER_PENDING_REQUEST_KEY, JSON.stringify({
+      requestSignature,
+      clientRequestId
+    }));
+  } catch {}
+  return clientRequestId;
+}
+
+function clearTask6OrderClientRequestId(clientRequestId = "") {
+  try {
+    const pending = JSON.parse(window.sessionStorage.getItem(TASK6_ORDER_PENDING_REQUEST_KEY) || "null");
+    if (!clientRequestId || pending?.clientRequestId === clientRequestId) {
+      window.sessionStorage.removeItem(TASK6_ORDER_PENDING_REQUEST_KEY);
+    }
+  } catch {
+    try { window.sessionStorage.removeItem(TASK6_ORDER_PENDING_REQUEST_KEY); } catch {}
+  }
+}
 
 function getSecureQrClientRequestId(items = []) {
   const signature = JSON.stringify(items.map((item) => ({ id: String(item.id), qty: Number(item.qty) })));
@@ -8102,7 +8139,7 @@ async function handleCheckoutSubmit(e) {
     : isAddonOrder
       ? `/api/order-tracking/${encodeURIComponent(getActiveHotelSlug())}/${encodeURIComponent(orderContext.addToOrderId)}/add-items`
       : "/api/orders";
-  const payload = isSecureQrOrder
+  let payload = isSecureQrOrder
     ? {
         clientRequestId: getSecureQrClientRequestId(orderItemsPayload),
         expectedSessionVersion: orderContext.qrSessionVersion,
@@ -8139,6 +8176,13 @@ async function handleCheckoutSubmit(e) {
         orderContext: orderContextPayload,
         items: orderItemsPayload
       };
+  const task6OperationScope = isAddonOrder ? "public-addon" : "public-order";
+  const task6ClientRequestId = isSecureQrOrder
+    ? ""
+    : getTask6OrderClientRequestId(task6OperationScope, payload);
+  if (!isSecureQrOrder) {
+    payload = { ...payload, clientRequestId: task6ClientRequestId };
+  }
 
   let waLink;
   let tracking = null;
@@ -8151,9 +8195,10 @@ async function handleCheckoutSubmit(e) {
       payload,
       isSecureQrOrder
         ? { credentials: "include", headers: { "X-QR-CSRF-Token": orderContext.qrCsrfToken } }
-        : undefined
+        : { headers: { "Idempotency-Key": task6ClientRequestId } }
     );
     if (isSecureQrOrder) clearSecureQrClientRequestId();
+    else clearTask6OrderClientRequestId(task6ClientRequestId);
     const approvedSummaryText =
       result?.preview || result?.order?.whatsapp_message || summaryText;
     const activeHotelWhatsappLink = cleanPhone(CONFIG.OWNER_WHATSAPP_NUMBER)
