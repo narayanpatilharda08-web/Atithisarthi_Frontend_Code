@@ -14429,11 +14429,22 @@ async function loadStaffTestimonials({ silent = false } = {}) {
   }
 }
 
-async function patchStaffOrderAction(orderId, action) {
+function getStaffFinancialActionIdempotencyKey(button, action) {
+  const existing = String(button?.dataset?.task6BillingRequestId || "").trim();
+  if (existing) return existing;
+  const suffix = window.crypto?.randomUUID?.() ||
+    `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+  const key = `staff-billing-${action}-${suffix}`;
+  if (button?.dataset) button.dataset.task6BillingRequestId = key;
+  return key;
+}
+
+async function patchStaffOrderAction(orderId, action, idempotencyKey = "") {
   return staffFetchJson(
     `${STAFF_API_BASE}/orders/${encodeURIComponent(orderId)}/${action}`,
     {
-      method: "PATCH"
+      method: "PATCH",
+      headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined
     }
   );
 }
@@ -14650,7 +14661,15 @@ async function handleStaffOrderAction(button, action, actionLabel) {
   try {
     setStaffActionBusyState(button, true);
     button.textContent = "Updating...";
-    const result = await patchStaffOrderAction(orderId, action);
+    const isBillingAction = [
+      "mark-billed",
+      "mark-family-billed"
+    ].includes(action);
+    const result = await patchStaffOrderAction(
+      orderId,
+      action,
+      isBillingAction ? getStaffFinancialActionIdempotencyKey(button, action) : ""
+    );
     applyStaffOrderMutationResult(result, orderId);
     const successMessage = `${actionLabel} completed for order ${orderId}.`;
     setStaffOrdersActionStatus(successMessage, "success");
