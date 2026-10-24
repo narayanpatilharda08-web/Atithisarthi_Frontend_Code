@@ -4931,7 +4931,6 @@ function getAdminRoomBookingStatusOptions(currentStatus = "") {
     ["pending", "Pending"],
     ["confirmed", "Confirmed"],
     ["checked_in", "Checked In"],
-    ["checked_out", "Checked Out"],
     ["cancelled", "Cancelled"],
     ["no_show", "No Show"]
   ];
@@ -4977,7 +4976,7 @@ function buildAdminRoomBookingControls(booking = {}) {
         >
           ${getAdminRoomBookingStatusOptions(bookingStatus)}
         </select>
-        <p class="admin-field-hint">${isClosed ? "Closed bookings are locked by the backend." : "Use check-in before checkout."}</p>
+        <p class="admin-field-hint">${isClosed ? "Closed bookings are locked by the backend." : "Use Checkout Summary and Finalize Combined Checkout to check out safely."}</p>
       </div>
       <button
         type="button"

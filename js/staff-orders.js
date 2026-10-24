@@ -249,7 +249,7 @@ const STAFF_SUPPORT_STATUS_OPTIONS = ["new", "acknowledged", "resolved", "closed
 const STAFF_ROOM_BOOKING_STATUS_TRANSITIONS = Object.freeze({
   pending: Object.freeze(["pending", "confirmed", "cancelled", "no_show"]),
   confirmed: Object.freeze(["confirmed", "checked_in", "cancelled", "no_show"]),
-  checked_in: Object.freeze(["checked_in", "checked_out"]),
+  checked_in: Object.freeze(["checked_in"]),
   checked_out: Object.freeze(["checked_out"]),
   cancelled: Object.freeze(["cancelled"]),
   no_show: Object.freeze(["no_show"])
@@ -10652,7 +10652,7 @@ function getStaffRoomBookingStatusConfirmMessage(bookingId = "", status = "") {
   return [
     `Update room booking ${bookingId} to "${statusLabel}"?`,
     "",
-    "This only changes the room booking status. It does not collect payment, update food orders, or generate checkout billing."
+    "This only changes the room booking status. Use Checkout Summary and Finalize Combined Checkout for checkout."
   ].join("\n");
 }
 
