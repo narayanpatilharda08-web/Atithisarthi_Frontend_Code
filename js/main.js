@@ -102,10 +102,6 @@ let CONFIG = {
   API_BASE_URL:
   window.APP_RUNTIME_CONFIG?.BACKEND_BASE_URL || getDefaultBackendBaseUrl()
 };
-const ALLOW_ORDER_WHATSAPP_FALLBACK_ON_SAVE_FAILURE = getRuntimeBooleanConfig(
-  "ALLOW_ORDER_WHATSAPP_FALLBACK_ON_SAVE_FAILURE",
-  true
-);
 const OPEN_WHATSAPP_AFTER_VERIFIED_ONLINE_PAYMENT = getRuntimeBooleanConfig(
   "OPEN_WHATSAPP_AFTER_VERIFIED_ONLINE_PAYMENT",
   false
@@ -8186,8 +8182,6 @@ async function handleCheckoutSubmit(e) {
 
   let waLink;
   let tracking = null;
-  let usedDirectWhatsAppFallback = false;
-
   let secureQrSubmissionReference = "";
   try {
     const result = await postJSON(
@@ -8221,19 +8215,16 @@ async function handleCheckoutSubmit(e) {
       showToast(error.message || "Order details are invalid. Please refresh and try again.");
       return;
     }
-    if (!ALLOW_ORDER_WHATSAPP_FALLBACK_ON_SAVE_FAILURE) {
-      console.warn(
-        "Backend save failed and direct WhatsApp fallback is disabled by runtime policy",
-        error
-      );
-      showToast(
-        "Backend save failed, so this order was not sent to WhatsApp. Please wait a moment and try again."
-      );
-      return;
-    }
-    console.warn("Backend save failed, using direct WhatsApp fallback", error);
-    usedDirectWhatsAppFallback = true;
-    waLink = ownerWhatsAppLink(summaryText);
+    // A failed durable write must never become a WhatsApp-only operational
+    // order. Staff/KDS would have no canonical record, which creates a
+    // false-success notification and can lead to duplicate fulfilment.
+    console.warn("Backend save failed; WhatsApp handoff skipped because no durable order exists", error);
+    showToast(
+      isSecureQrOrder
+        ? "Table order was not saved. It was not sent to the kitchen or WhatsApp. Please try again."
+        : "Order was not saved. It was not sent to the hotel or WhatsApp. Please try again."
+    );
+    return;
   }
 
   // Clear cart
@@ -8260,9 +8251,7 @@ async function handleCheckoutSubmit(e) {
     showOrderTrackingPrompt(tracking);
   }
   showToast(
-    usedDirectWhatsAppFallback
-      ? "Backend save failed. Order opened in WhatsApp only, so tracking is not available for this order."
-      : tracking
+    tracking
       ? "Order saved. Tracking link is ready."
       : isSecureQrOrder
       ? "Table order received. Live status is ready."
