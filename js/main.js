@@ -2678,7 +2678,7 @@ function showSecureQrOrderStatusPrompt(publicReference = "") {
       <strong>Your order was confirmed. You can now view its live status.</strong>
     </div>
     <div class="order-tracking-prompt__actions">
-      <a class="btn btn-primary" href="${escapeAttr(statusUrl)}" target="_blank" rel="noopener noreferrer">View Order Status</a>
+      <a class="btn btn-primary" href="${escapeAttr(statusUrl)}">View Order Status</a>
       <button type="button" class="order-tracking-prompt__close" aria-label="Dismiss order status link">&times;</button>
     </div>
   `;
